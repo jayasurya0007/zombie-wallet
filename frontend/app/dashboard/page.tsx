@@ -6,6 +6,7 @@ import {
   useSignAndExecuteTransaction,
 } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
+import QRCode from 'react-qr-code';
 
 export default function Dashboard() {
   const account = useCurrentAccount();
@@ -13,6 +14,7 @@ export default function Dashboard() {
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [status, setStatus] = useState('');
+  const [mode, setMode] = useState<'send' | 'receive'>('send');
 
   const handleTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,27 +60,51 @@ export default function Dashboard() {
     }
   };
 
+  const handleCopy = () => {
+    if (account?.address) {
+      navigator.clipboard.writeText(account.address);
+      setStatus('Address copied to clipboard!');
+    }
+  };
+
   return (
     <main>
       <h1>Dashboard</h1>
-      <p><strong>Wallet Address:</strong> {account?.address}</p>
-      <form onSubmit={handleTransfer}>
-        <input
-          type="text"
-          placeholder="Recipient Address"
-          value={recipient}
-          onChange={(e) => setRecipient(e.target.value)}
-          required
-        />
-        <input
-          type="number"
-          placeholder="Amount (SUI)"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          required
-        />
-        <button type="submit">Send SUI</button>
-      </form>
+      <div>
+        <button onClick={() => setMode('send')}>Send</button>
+        <button onClick={() => setMode('receive')}>Receive</button>
+      </div>
+
+      {mode === 'send' && (
+        <form onSubmit={handleTransfer}>
+          <input
+            type="text"
+            placeholder="Recipient Address"
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            required
+          />
+          <input
+            type="number"
+            placeholder="Amount (SUI)"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            required
+          />
+          <button type="submit">Send SUI</button>
+        </form>
+      )}
+
+      {mode === 'receive' && account?.address && (
+        <div>
+          <p><strong>Your Wallet Address:</strong> {account.address}</p>
+          <button onClick={handleCopy}>Copy Address</button>
+          <div>
+            <QRCode value={account.address || ''} size={200} />
+          </div>
+        </div>
+      )}
+
       <p>{status}</p>
     </main>
   );
