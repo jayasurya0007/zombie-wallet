@@ -1,0 +1,6 @@
+**/node_modules/
+**/.env/
+**/.env*
+
+/web3/build/
+/web3/Move.lock
