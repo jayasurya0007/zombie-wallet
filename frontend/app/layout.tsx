@@ -4,6 +4,7 @@ import '@mysten/dapp-kit/dist/index.css';
 import { SuiClientProvider, WalletProvider } from '@mysten/dapp-kit';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { getFullnodeUrl } from '@mysten/sui/client';
+import { ContractProvider } from '@/app/context/ContractContext';
 
 const queryClient = new QueryClient();
 const networks = {
@@ -19,7 +20,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <QueryClientProvider client={queryClient}>
           <SuiClientProvider networks={networks} defaultNetwork="testnet">
             <WalletProvider>
-              {children}
+              <ContractProvider>
+                {children}
+              </ContractProvider>
             </WalletProvider>
           </SuiClientProvider>
         </QueryClientProvider>
