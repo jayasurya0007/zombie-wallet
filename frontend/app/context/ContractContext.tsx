@@ -51,6 +51,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   const [wallets, setWallets] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  
   useEffect(() => {
     if (currentAccount?.address) {
       fetchRegistries();
@@ -115,11 +116,14 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     
     try {
       const tx = new Transaction();
-    const coin = tx.object(coinId);
-    const total = allocations.reduce((a, b) => a + b, 0);
+      const coin = tx.object(coinId);
+      const total = allocations
+        .map((x) => Number(x))
+        .reduce((a, b) => a + b, 0);
 
-    // Split the coin to match total allocations
-    const [primaryCoin] = tx.splitCoins(coin, [total]);
+      const [primaryCoin] = tx.splitCoins(coin, [BigInt(total)]);
+
+
     tx.moveCall({
       target: `${ZOMBIE_MODULE}::zombie::create_wallet`,
       arguments: [
