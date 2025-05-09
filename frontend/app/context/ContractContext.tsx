@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import {
   useCurrentAccount,
   useSignAndExecuteTransaction,
-  useSuiClient
+  useSuiClient,
 } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { ZOMBIE_MODULE, REGISTRY_TYPE, ZOMBIE_WALLET_TYPE } from '@/config/constants';
@@ -18,8 +18,7 @@ interface ContractContextType {
     duration: number,
     timeUnit: number,
     beneficiaries: string[],
-    allocations: number[],
-    zkCommitment: string
+    allocations: number[]
   ) => Promise<void>;
   checkIn: (
     walletId: string,
@@ -39,6 +38,7 @@ interface ContractContextType {
   ) => Promise<void>;
   fetchRegistries: () => Promise<void>;
   fetchWallets: () => Promise<void>;
+  getCoins: () => Promise<{ coinObjectId: string, balance: string }[]>;
 }
 
 const ContractContext = createContext<ContractContextType>({} as ContractContextType);
@@ -51,7 +51,18 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   const [wallets, setWallets] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  
+  const getCoins = async () => {
+    if (!currentAccount?.address) return [];
+    const res = await provider.getCoins({
+      owner: currentAccount.address,
+      coinType: '0x2::sui::SUI',
+    });
+    return res.data.map((coin: any) => ({
+      coinObjectId: coin.coinObjectId,
+      balance: coin.balance,
+    }));
+  };
+
   useEffect(() => {
     if (currentAccount?.address) {
       fetchRegistries();
@@ -109,44 +120,37 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     duration: number,
     timeUnit: number,
     beneficiaries: string[],
-    allocations: number[],
-    zkCommitment: string
+    allocations: number[]
   ) => {
     if (!registries.length) throw new Error("Create a registry first");
-    
+
     try {
       const tx = new Transaction();
       const coin = tx.object(coinId);
-      const total = allocations
-        .map((x) => Number(x))
-        .reduce((a, b) => a + b, 0);
+      const total = allocations.reduce((a, b) => a + Number(b), 0);
+      const [lockedCoin] = tx.splitCoins(coin, [BigInt(total)]);
 
-      const [primaryCoin] = tx.splitCoins(coin, [BigInt(total)]);
+      tx.moveCall({
+        target: `${ZOMBIE_MODULE}::zombie::create_wallet`,
+        arguments: [
+          tx.object(registries[0].objectId),
+          lockedCoin,
+          tx.pure.u64(duration),
+          tx.pure.u8(timeUnit),
+          tx.pure.vector('address', beneficiaries),
+          tx.pure.vector('u64', allocations),
+          tx.object('0x6'),
+        ],
+      });
 
-
-    tx.moveCall({
-      target: `${ZOMBIE_MODULE}::zombie::create_wallet`,
-      arguments: [
-        tx.object(registries[0].objectId),
-        primaryCoin,
-        tx.pure.u64(duration),
-        tx.pure.u8(timeUnit),
-        tx.pure.vector('address',beneficiaries),
-        tx.pure.vector('u64', allocations),
-        tx.pure(new Uint8Array(Buffer.from(zkCommitment))),
-        tx.object('0x6'),
-      ],
-    });
-        
-
-    await signAndExecuteTransactionBlock({
-      transaction: tx,
-      chain: 'sui:testnet',
-    });
-    await fetchWallets();
+      await signAndExecuteTransactionBlock({
+        transaction: tx,
+        chain: 'sui:testnet',
+      });
+      await fetchWallets();
     } catch (error) {
       console.error('Create wallet failed:', error);
-      throw error; // Re-throw for UI handling
+      throw error;
     }
   };
 
@@ -160,8 +164,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
       target: `${ZOMBIE_MODULE}::zombie::check_in`,
       arguments: [
         tx.object(walletId),
-        tx.pure(new Uint8Array(Buffer.from(newCommitment, 'hex'))),
-        tx.pure(new Uint8Array(Buffer.from(zkProof, 'hex'))),
+        // Remove zkCommitment/zkProof if not used in Move
         tx.object('0x6'),
       ],
     });
@@ -169,7 +172,6 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     await signAndExecuteTransactionBlock({
       transaction: tx,
       chain: 'sui:testnet',
-
     });
   };
 
@@ -201,7 +203,6 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
       arguments: [
         tx.object(registryId),
         tx.object(walletId),
-        tx.pure(new Uint8Array(Buffer.from(zkProof, 'hex'))),
         tx.object('0x6'),
       ],
     });
@@ -250,6 +251,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         updateThreshold,
         fetchRegistries,
         fetchWallets,
+        getCoins,
       }}
     >
       {children}

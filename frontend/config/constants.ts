@@ -1,4 +1,4 @@
 // config/constants.ts
-export const ZOMBIE_MODULE = '0xf22a84691f0d2fee7829094b830aa82e4208e475448fcb02d2707aac0297dcad';
+export const ZOMBIE_MODULE = '0x29bf486087225a8e77f52a129f469e32c8244ced8ea8305858a22a3c2890ef77';
 export const REGISTRY_TYPE = `${ZOMBIE_MODULE}::zombie::Registry`;
 export const ZOMBIE_WALLET_TYPE = `${ZOMBIE_MODULE}::zombie::ZombieWallet`;
