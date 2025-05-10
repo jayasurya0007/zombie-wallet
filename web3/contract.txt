@@ -2,11 +2,11 @@ module zombiewallet::zombie {
     use sui::coin::{Coin, from_balance, into_balance};
     use sui::balance::{Balance, split, join, value, zero};
     use sui::clock::{Clock, timestamp_ms};
-    use sui::object::{new, delete};
+    use sui::object::new;
     use sui::transfer::public_transfer;
     use sui::tx_context::sender;
     use sui::sui::SUI;
-    use sui::table::{Table, contains, add, borrow_mut, borrow, remove, destroy_empty};
+    use sui::table::{Table, contains, add, remove, borrow_mut};
 
     // Error codes
     const EWalletExists: u64 = 0;
@@ -14,13 +14,13 @@ module zombiewallet::zombie {
     const EInvalidTimeUnit: u64 = 2;
     const EInvalidAllocations: u64 = 3;
     const EInvalidOwnership: u64 = 4;
+    const EInactiveThresholdNotMet: u64 = 5;
     const EInvalidWithdrawAmount: u64 = 6;
-    const ENotBeneficiary: u64 = 8;
-    const EInactiveThresholdNotMet: u64 = 9;
-    const ENoFunds: u64 = 10;
+    const ENoFunds: u64 = 7;
+    const ENotBeneficiary: u64 = 8; // <-- Added for checkin
 
     public struct Registry has key, store {
-        id: UID,
+        id: sui::object::UID,
         owners: Table<address, bool>
     }
 
@@ -31,10 +31,9 @@ module zombiewallet::zombie {
     }
 
     public struct ZombieWallet has key, store {
-        id: UID,
+        id: sui::object::UID,
         owner: address,
         beneficiaries: Table<address, BeneficiaryData>, // Tracks per-beneficiary timers
-        beneficiary_addrs: vector<address>, // Track order and allow iteration
         coin: Balance<SUI>
     }
 
@@ -60,7 +59,6 @@ module zombiewallet::zombie {
             id: new(ctx),
             owner: sender_addr,
             beneficiaries: sui::table::new<address, BeneficiaryData>(ctx),
-            beneficiary_addrs: vector::empty<address>(),
             coin: zero()
         };
         public_transfer(wallet, sender_addr);
@@ -92,27 +90,22 @@ module zombiewallet::zombie {
         };
 
         add(&mut wallet.beneficiaries, beneficiary, data);
-        vector::push_back(&mut wallet.beneficiary_addrs, beneficiary);
     }
 
-    /// Allow owner or any beneficiary to withdraw from the wallet
-    public entry fun withdraw(
+    public entry fun owner_withdraw(
         wallet: &mut ZombieWallet,
         amount: u64,
         ctx: &mut sui::tx_context::TxContext
     ) {
-        let caller = sender(ctx);
-        let is_owner = caller == wallet.owner;
-        let is_beneficiary = contains(&wallet.beneficiaries, caller);
-        assert!(is_owner || is_beneficiary, ENotBeneficiary);
-
+        assert!(wallet.owner == sender(ctx), EInvalidOwnership);
         let bal = value(&wallet.coin);
         assert!(amount <= bal, EInvalidWithdrawAmount);
 
         let coin = from_balance(split(&mut wallet.coin, amount), ctx);
-        public_transfer(coin, caller);
+        public_transfer(coin, sender(ctx));
     }
 
+    
     /// Beneficiary or owner can check in to reset the inactivity timer
     public entry fun checkin(
         wallet: &mut ZombieWallet,
@@ -130,69 +123,5 @@ module zombiewallet::zombie {
 
         let data: &mut BeneficiaryData = borrow_mut(&mut wallet.beneficiaries, beneficiary);
         data.last_checkin = timestamp_ms(clock);
-    }
-
-    /// On inactivity, distribute remaining allocations to beneficiaries
-    public entry fun execute_transfer(
-        wallet: ZombieWallet,
-        clock: &Clock,
-        ctx: &mut sui::tx_context::TxContext
-    ) {
-        let now = timestamp_ms(clock);
-
-        // Destructure wallet to move out fields without copy
-        let ZombieWallet {
-            id,
-            owner: _,
-            mut beneficiaries,
-            beneficiary_addrs,
-            coin
-        } = wallet;
-
-        let len = vector::length(&beneficiary_addrs);
-        assert!(len > 0, EInvalidAllocations);
-
-        // Check inactivity for all beneficiaries
-        let mut i = 0;
-        while (i < len) {
-            let addr = *vector::borrow(&beneficiary_addrs, i);
-            let data = borrow(&beneficiaries, addr);
-            assert!(
-                now > data.last_checkin + (data.threshold * 1000),
-                EInactiveThresholdNotMet
-            );
-            i = i + 1;
-        };
-
-        let mut coin_mut = coin;
-        let total = value(&coin_mut);
-        assert!(total > 0, ENoFunds);
-
-        // Distribute allocations
-        let mut sum_alloc = 0;
-        i = 0;
-        while (i < len - 1) {
-            let addr = *vector::borrow(&beneficiary_addrs, i);
-            let data = borrow(&beneficiaries, addr);
-            let allocation = data.allocation;
-            sum_alloc = sum_alloc + allocation;
-            let split_balance = split(&mut coin_mut, allocation);
-            let coin_portion = from_balance(split_balance, ctx);
-            public_transfer(coin_portion, addr);
-            // Remove beneficiary from table
-            remove(&mut beneficiaries, addr);
-            i = i + 1;
-        };
-        // Last beneficiary gets the rest
-        let addr = *vector::borrow(&beneficiary_addrs, len - 1);
-        let last_coin = from_balance(coin_mut, ctx);
-        public_transfer(last_coin, addr);
-        remove(&mut beneficiaries, addr);
-
-        // Destroy the now-empty beneficiaries table
-        destroy_empty(beneficiaries);
-
-        // Delete the wallet's UID
-        delete(id);
     }
 }

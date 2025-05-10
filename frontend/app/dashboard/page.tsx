@@ -4,6 +4,17 @@ import { useCurrentAccount } from '@mysten/dapp-kit';
 import { useState, useEffect } from 'react';
 import { formatBalance } from '@/lib/utils';
 
+// Helper to robustly extract a number from Sui Move object fields
+function extractU64(val: any) {
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') return Number(val);
+  if (val && typeof val === 'object') {
+    if ('fields' in val && typeof val.fields.value !== 'undefined') return Number(val.fields.value);
+    if ('value' in val) return Number(val.value);
+  }
+  return 0;
+}
+
 export default function Dashboard() {
   const {
     isConnected,
@@ -13,7 +24,7 @@ export default function Dashboard() {
     createRegistry,
     createWallet,
     addBeneficiary,
-    ownerWithdraw,
+    withdraw,
     executeTransfer,
     fetchRegistry,
     fetchWallets,
@@ -40,7 +51,8 @@ export default function Dashboard() {
     return 'unknown-id';
   };
 
-  // Load data on account change
+
+   // Load data on account change
   useEffect(() => {
     if (isConnected && currentAccount?.address) {
       fetchRegistry();
@@ -83,13 +95,13 @@ export default function Dashboard() {
   };
 
   const handleWithdraw = async (walletId: string) => {
-    await ownerWithdraw(walletId, Number(withdrawAmount));
+    await withdraw(walletId, Number(withdrawAmount));
     setShowWithdrawForm(null);
     setWithdrawAmount('');
   };
 
-  const handleExecuteTransfer = async (registryId: string, walletId: string, beneficiary: string) => {
-    await executeTransfer(registryId, walletId, beneficiary);
+  const handleExecuteTransfer = async (walletId: string) => {
+    await executeTransfer(walletId);
   };
 
   // First-time user flow
@@ -213,19 +225,25 @@ export default function Dashboard() {
       {activeTab === 'beneficiaries' && selectedWallet && (
         <div>
           <h2 className="text-2xl font-semibold mb-4">Beneficiaries</h2>
-          {Object.entries(wallets.find(w => getWalletId(w) === selectedWallet)?.beneficiaries || {}).map(([address, data]) => (
-            <div key={address} className="bg-white p-4 mb-4 rounded-lg shadow">
-              <p className="font-medium">Address: {address.slice(0, 8)}...{address.slice(-4)}</p>
-              <p>Allocation: {formatBalance(data.allocation)} SUI</p>
-              <p>Threshold: {data.threshold} seconds</p>
-              <button
-                onClick={() => handleExecuteTransfer(registry.objectId, selectedWallet, address)}
-                className="mt-2 bg-purple-100 hover:bg-purple-200 text-purple-800 py-1 px-3 rounded text-sm"
-              >
-                Execute Transfer
-              </button>
-            </div>
-          ))}
+          {Object.entries(wallets.find(w => getWalletId(w) === selectedWallet)?.beneficiaries || {})
+            .filter(([address]) => /^0x[a-fA-F0-9]{40,}$/.test(address))
+            .map(([address, data]) => {
+              const allocation = extractU64(data.allocation);
+              const threshold = extractU64(data.threshold);
+              return (
+                <div key={address} className="bg-white p-4 mb-4 rounded-lg shadow">
+                  <p className="font-medium">Address: {address.slice(0, 8)}...{address.slice(-4)}</p>
+                  <p>Allocation: {formatBalance(allocation.toString())} SUI</p>
+                  <p>Threshold: {threshold} seconds</p>
+                  <button
+                    onClick={() => handleExecuteTransfer(selectedWallet)}
+                    className="mt-2 bg-purple-100 hover:bg-purple-200 text-purple-800 py-1 px-3 rounded text-sm"
+                  >
+                    Execute Transfer
+                  </button>
+                </div>
+              );
+            })}
         </div>
       )}
 

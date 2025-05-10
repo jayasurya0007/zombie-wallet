@@ -18,6 +18,7 @@ interface ZombieWallet {
   id: string;
   owner: string;
   beneficiaries: Record<string, BeneficiaryData>;
+  beneficiary_addrs: string[];
   coin: { value: string };
 }
 
@@ -35,12 +36,8 @@ interface ContractContextType {
     duration: number,
     timeUnit: number
   ) => Promise<void>;
-  ownerWithdraw: (walletId: string, amount: number) => Promise<void>;
-  executeTransfer: (
-    registryId: string,
-    walletId: string,
-    beneficiary: string
-  ) => Promise<void>;
+  withdraw: (walletId: string, amount: number) => Promise<void>;
+  executeTransfer: (walletId: string) => Promise<void>;
   fetchRegistry: () => Promise<void>;
   fetchWallets: () => Promise<void>;
   getCoins: () => Promise<{ coinObjectId: string, balance: string }[]>;
@@ -187,39 +184,29 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   }
 };
 
-  const ownerWithdraw = async (walletId: string, amount: number) => {
+  const withdraw = async (walletId: string, amount: number) => {
     const tx = new Transaction();
     tx.moveCall({
-      target: `${ZOMBIE_MODULE}::zombie::owner_withdraw`,
+      target: `${ZOMBIE_MODULE}::zombie::withdraw`,
       arguments: [
         tx.object(walletId),
-        tx.pure.u64(amount),
+        tx.pure.u64(amount * 1e9), // Convert SUI to MIST
       ],
     });
-    await signAndExecuteTransactionBlock({
-      transaction: tx,
-    });
+    await signAndExecuteTransactionBlock({ transaction: tx });
     await fetchWallets();
   };
 
-  const executeTransfer = async (
-    registryId: string,
-    walletId: string,
-    beneficiary: string
-  ) => {
+  const executeTransfer = async (walletId: string) => {
     const tx = new Transaction();
     tx.moveCall({
       target: `${ZOMBIE_MODULE}::zombie::execute_transfer`,
       arguments: [
-        tx.object(registryId),
         tx.object(walletId),
-        tx.pure.address(beneficiary),
         tx.object('0x6'), // Clock object
       ],
     });
-    await signAndExecuteTransactionBlock({
-      transaction: tx,
-    });
+    await signAndExecuteTransactionBlock({ transaction: tx });
     await fetchWallets();
   };
 
@@ -233,8 +220,8 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         createRegistry,
         createWallet,
         addBeneficiary,
-        ownerWithdraw,
-        executeTransfer,
+        withdraw, // Renamed from ownerWithdraw
+        executeTransfer, // Updated signature
         fetchRegistry,
         fetchWallets,
         getCoins,
