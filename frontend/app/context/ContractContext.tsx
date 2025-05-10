@@ -142,49 +142,50 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
 
   // --- FINAL, ROBUST addBeneficiary ---
   const addBeneficiary = async (
-    walletId: string,
-    beneficiary: string,
-    allocation: number,
-    duration: number,
-    timeUnit: number
-  ) => {
-    if (!currentAccount?.address) throw new Error("No connected account");
-    const coins = await getCoins();
-    // Convert SUI to MIST
-    const allocationMist = Math.round(allocation * 1e9);
+  walletId: string,
+  beneficiary: string,
+  allocation: number,
+  duration: number,
+  timeUnit: number
+) => {
+  if (!currentAccount?.address) throw new Error("No connected account");
+  
+  // Convert SUI to MIST (1 SUI = 1e9 MIST)
+  const allocationMist = Math.round(allocation * 1e9);
+  
+  const tx = new Transaction();
 
-    // Find a coin with enough balance for allocation + some for gas
-    const needed = allocationMist + 1e7; // 0.01 SUI extra for gas
-    const coin = coins.find(c => Number(c.balance) >= needed);
-    if (!coin) throw new Error("No coin with enough balance for allocation and gas");
+  // Correct method name and syntax for splitting coins
+  const [depositCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(allocationMist)]);
 
-    const tx = new Transaction();
-    // Split the coin for allocation, so the rest is used for gas
-    const [depositCoin] = tx.splitCoins(tx.object(coin.coinObjectId), [tx.pure.u64(allocationMist)]);
+  // Set explicit gas budget (0.2 SUI)
+  tx.setGasBudget(10000000); // 200 million MIST = 0.2 SUI
 
-    tx.moveCall({
-      target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
-      arguments: [
-        tx.object(walletId),
-        tx.pure.address(beneficiary),
-        tx.pure.u64(allocationMist),
-        tx.pure.u64(duration),
-        tx.pure.u8(timeUnit),
-        depositCoin,
-        tx.object('0x6'), // Clock object
-      ],
+  tx.moveCall({
+    target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
+    arguments: [
+      tx.object(walletId),
+      tx.pure.address(beneficiary),
+      tx.pure.u64(allocationMist),
+      tx.pure.u64(duration),
+      tx.pure.u8(timeUnit),
+      depositCoin,
+      tx.object('0x6'), // Clock object
+    ],
+  });
+
+  try {
+    await signAndExecuteTransactionBlock({
+      transaction: tx,
     });
-
-    try {
-      await signAndExecuteTransactionBlock({
-        transaction: tx,
-      });
-      await fetchWallets();
-    } catch (error) {
-      console.error("Transaction failed:", error);
-      throw new Error("Transaction failed. Please check your balance and try again.");
-    }
-  };
+    await fetchWallets();
+  } catch (error) {
+    console.error("Transaction failed:", error);
+    // Proper error message handling
+    const message = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Transaction failed: ${message}`);
+  }
+};
 
   const ownerWithdraw = async (walletId: string, amount: number) => {
     const tx = new Transaction();
