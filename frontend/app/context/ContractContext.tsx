@@ -1,3 +1,4 @@
+'use client';
 import { createContext, useContext, useEffect, useState } from 'react';
 import {
   useCurrentAccount,
@@ -7,36 +8,40 @@ import {
 import { Transaction } from '@mysten/sui/transactions';
 import { ZOMBIE_MODULE, REGISTRY_TYPE, ZOMBIE_WALLET_TYPE } from '@/config/constants';
 
+interface BeneficiaryData {
+  last_checkin: string;
+  threshold: string;
+  allocation: string;
+}
+
+interface ZombieWallet {
+  id: string;
+  owner: string;
+  beneficiaries: Record<string, BeneficiaryData>;
+  coin: { value: string };
+}
+
 interface ContractContextType {
   isConnected: boolean;
-  registries: any[];
-  wallets: any[];
+  registry: any | null;
+  wallets: ZombieWallet[];
   isLoading: boolean;
   createRegistry: () => Promise<void>;
-  createWallet: (
-    coinId: string,
-    duration: number,
-    timeUnit: number,
-    beneficiaries: string[],
-    allocations: number[]
-  ) => Promise<void>;
-  checkIn: (
+  createWallet: (registryId: string) => Promise<void>;
+  addBeneficiary: (
     walletId: string,
-    newCommitment: string,
-    zkProof: string
+    beneficiary: string,
+    allocation: number,
+    duration: number,
+    timeUnit: number
   ) => Promise<void>;
-  withdraw: (walletId: string, amount: number) => Promise<void>;
+  ownerWithdraw: (walletId: string, amount: number) => Promise<void>;
   executeTransfer: (
     registryId: string,
     walletId: string,
-    zkProof: string
+    beneficiary: string
   ) => Promise<void>;
-  updateThreshold: (
-    walletId: string,
-    newDuration: number,
-    timeUnit: number
-  ) => Promise<void>;
-  fetchRegistries: () => Promise<void>;
+  fetchRegistry: () => Promise<void>;
   fetchWallets: () => Promise<void>;
   getCoins: () => Promise<{ coinObjectId: string, balance: string }[]>;
 }
@@ -47,8 +52,8 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   const currentAccount = useCurrentAccount();
   const { mutateAsync: signAndExecuteTransactionBlock } = useSignAndExecuteTransaction();
   const provider = useSuiClient();
-  const [registries, setRegistries] = useState<any[]>([]);
-  const [wallets, setWallets] = useState<any[]>([]);
+  const [registry, setRegistry] = useState<any | null>(null);
+  const [wallets, setWallets] = useState<ZombieWallet[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   const getCoins = async () => {
@@ -65,13 +70,13 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (currentAccount?.address) {
-      fetchRegistries();
+      fetchRegistry();
       fetchWallets();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAccount?.address]);
 
-  const fetchRegistries = async () => {
+  const fetchRegistry = async () => {
     if (!currentAccount?.address) return;
     setIsLoading(true);
     try {
@@ -80,7 +85,10 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         filter: { StructType: REGISTRY_TYPE },
         options: { showContent: true },
       });
-      setRegistries(response.data.map((obj: any) => obj.data!));
+      setRegistry(response.data[0]?.data || null);
+    } catch (error) {
+      console.error("Failed to fetch registry:", error);
+      setRegistry(null);
     } finally {
       setIsLoading(false);
     }
@@ -95,99 +103,100 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         filter: { StructType: ZOMBIE_WALLET_TYPE },
         options: { showContent: true },
       });
-      setWallets(response.data.map((obj: any) => obj.data!));
+      setWallets(response.data.map((obj: any) => obj.data?.content?.fields as ZombieWallet));
+    } catch (error) {
+      console.error("Failed to fetch wallets:", error);
+      setWallets([]);
     } finally {
       setIsLoading(false);
     }
   };
 
   const createRegistry = async () => {
+    if (!currentAccount?.address) throw new Error("No connected account");
     const tx = new Transaction();
     tx.moveCall({
       target: `${ZOMBIE_MODULE}::zombie::create_registry`,
       arguments: [],
     });
-
     await signAndExecuteTransactionBlock({
       transaction: tx,
-      chain: 'sui:testnet',
     });
-    await fetchRegistries();
+    await fetchRegistry();
   };
 
-  const createWallet = async (
-    coinId: string,
-    duration: number,
-    timeUnit: number,
-    beneficiaries: string[],
-    allocations: number[]
-  ) => {
-    if (!registries.length) throw new Error("Create a registry first");
-
-    try {
-      const tx = new Transaction();
-      const coin = tx.object(coinId);
-      const total = allocations.reduce((a, b) => a + Number(b), 0);
-      const [lockedCoin] = tx.splitCoins(coin, [BigInt(total)]);
-
-      tx.moveCall({
-        target: `${ZOMBIE_MODULE}::zombie::create_wallet`,
-        arguments: [
-          tx.object(registries[0].objectId),
-          lockedCoin,
-          tx.pure.u64(duration),
-          tx.pure.u8(timeUnit),
-          tx.pure.vector('address', beneficiaries),
-          tx.pure.vector('u64', allocations),
-          tx.object('0x6'),
-        ],
-      });
-
-      await signAndExecuteTransactionBlock({
-        transaction: tx,
-        chain: 'sui:testnet',
-      });
-      await fetchWallets();
-    } catch (error) {
-      console.error('Create wallet failed:', error);
-      throw error;
-    }
-  };
-
-  const checkIn = async (
-    walletId: string,
-    newCommitment: string,
-    zkProof: string
-  ) => {
+  const createWallet = async (registryId: string) => {
+    if (!currentAccount?.address) throw new Error("No connected account");
     const tx = new Transaction();
     tx.moveCall({
-      target: `${ZOMBIE_MODULE}::zombie::check_in`,
+      target: `${ZOMBIE_MODULE}::zombie::create_wallet`,
+      arguments: [
+        tx.object(registryId),
+      ],
+    });
+    await signAndExecuteTransactionBlock({
+      transaction: tx,
+    });
+    await fetchWallets();
+  };
+
+  // --- FINAL, ROBUST addBeneficiary ---
+  const addBeneficiary = async (
+    walletId: string,
+    beneficiary: string,
+    allocation: number,
+    duration: number,
+    timeUnit: number
+  ) => {
+    if (!currentAccount?.address) throw new Error("No connected account");
+    const coins = await getCoins();
+    // Convert SUI to MIST
+    const allocationMist = Math.round(allocation * 1e9);
+
+    // Find a coin with enough balance for allocation + some for gas
+    const needed = allocationMist + 1e7; // 0.01 SUI extra for gas
+    const coin = coins.find(c => Number(c.balance) >= needed);
+    if (!coin) throw new Error("No coin with enough balance for allocation and gas");
+
+    const tx = new Transaction();
+    // Split the coin for allocation, so the rest is used for gas
+    const [depositCoin] = tx.splitCoins(tx.object(coin.coinObjectId), [tx.pure.u64(allocationMist)]);
+
+    tx.moveCall({
+      target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
       arguments: [
         tx.object(walletId),
-        // Remove zkCommitment/zkProof if not used in Move
-        tx.object('0x6'),
+        tx.pure.address(beneficiary),
+        tx.pure.u64(allocationMist),
+        tx.pure.u64(duration),
+        tx.pure.u8(timeUnit),
+        depositCoin,
+        tx.object('0x6'), // Clock object
       ],
     });
 
-    await signAndExecuteTransactionBlock({
-      transaction: tx,
-      chain: 'sui:testnet',
-    });
+    try {
+      await signAndExecuteTransactionBlock({
+        transaction: tx,
+      });
+      await fetchWallets();
+    } catch (error) {
+      console.error("Transaction failed:", error);
+      throw new Error("Transaction failed. Please check your balance and try again.");
+    }
   };
 
-  const withdraw = async (walletId: string, amount: number) => {
+  const ownerWithdraw = async (walletId: string, amount: number) => {
     const tx = new Transaction();
     tx.moveCall({
-      target: `${ZOMBIE_MODULE}::zombie::withdraw`,
+      target: `${ZOMBIE_MODULE}::zombie::owner_withdraw`,
       arguments: [
         tx.object(walletId),
         tx.pure.u64(amount),
       ],
     });
-
     await signAndExecuteTransactionBlock({
       transaction: tx,
-      chain: 'sui:testnet',
     });
     await fetchWallets();
   };
@@ -195,7 +204,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   const executeTransfer = async (
     registryId: string,
     walletId: string,
-    zkProof: string
+    beneficiary: string
   ) => {
     const tx = new Transaction();
     tx.moveCall({
@@ -203,35 +212,12 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
       arguments: [
         tx.object(registryId),
         tx.object(walletId),
-        tx.object('0x6'),
+        tx.pure.address(beneficiary),
+        tx.object('0x6'), // Clock object
       ],
     });
-
     await signAndExecuteTransactionBlock({
       transaction: tx,
-      chain: 'sui:testnet',
-    });
-    await Promise.all([fetchRegistries(), fetchWallets()]);
-  };
-
-  const updateThreshold = async (
-    walletId: string,
-    newDuration: number,
-    timeUnit: number
-  ) => {
-    const tx = new Transaction();
-    tx.moveCall({
-      target: `${ZOMBIE_MODULE}::zombie::update_threshold`,
-      arguments: [
-        tx.object(walletId),
-        tx.pure.u64(newDuration),
-        tx.pure.u8(timeUnit),
-      ],
-    });
-
-    await signAndExecuteTransactionBlock({
-      transaction: tx,
-      chain: 'sui:testnet',
     });
     await fetchWallets();
   };
@@ -240,16 +226,15 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     <ContractContext.Provider
       value={{
         isConnected: !!currentAccount,
-        registries,
+        registry,
         wallets,
         isLoading,
         createRegistry,
         createWallet,
-        checkIn,
-        withdraw,
+        addBeneficiary,
+        ownerWithdraw,
         executeTransfer,
-        updateThreshold,
-        fetchRegistries,
+        fetchRegistry,
         fetchWallets,
         getCoins,
       }}
