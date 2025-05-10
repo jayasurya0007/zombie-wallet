@@ -19,7 +19,7 @@ interface ZombieWallet {
   owner: string;
   beneficiaries: Record<string, BeneficiaryData>;
   beneficiary_addrs: string[];
-  coin: { value: string };
+  coin: { balance: string };
 }
 
 interface ContractContextType {
@@ -92,22 +92,80 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   };
 
   const fetchWallets = async () => {
-    if (!currentAccount?.address) return;
-    setIsLoading(true);
-    try {
-      const response = await provider.getOwnedObjects({
-        owner: currentAccount.address,
-        filter: { StructType: ZOMBIE_WALLET_TYPE },
-        options: { showContent: true },
-      });
-      setWallets(response.data.map((obj: any) => obj.data?.content?.fields as ZombieWallet));
-    } catch (error) {
-      console.error("Failed to fetch wallets:", error);
-      setWallets([]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  if (!currentAccount?.address) return;
+  setIsLoading(true);
+  try {
+    const response = await provider.getOwnedObjects({
+      owner: currentAccount.address,
+      filter: { StructType: ZOMBIE_WALLET_TYPE },
+      options: { showContent: true, showType: true },
+    });
+
+    const walletsWithBeneficiaries = await Promise.all(
+      response.data.map(async (obj: any) => {
+        const walletContent = obj.data?.content;
+        if (!walletContent || walletContent.dataType !== 'moveObject') {
+          return null;
+        }
+
+        const baseWallet = {
+          id: obj.data.objectId,
+          owner: (walletContent.fields as { owner: string }).owner,
+          beneficiaries: {} as Record<string, BeneficiaryData>,
+          beneficiary_addrs: [] as string[],
+          coin: { 
+            balance: (walletContent.fields as { coin: { fields: { balance: string } }}).coin.fields?.balance 
+          }
+        };
+
+        // Handle dynamic fields for beneficiaries
+        const dynamicFields = await provider.getDynamicFields({
+          parentId: obj.data.objectId,
+        });
+
+        for (const field of dynamicFields.data) {
+          const fieldName = field.name as { 
+            type: string;
+            value?: { fields?: { key?: string } };
+          };
+          
+          const fieldData = await provider.getDynamicFieldObject({
+            parentId: obj.data.objectId,
+            name: field.name,
+          });
+
+          if (fieldData.data?.content?.dataType === 'moveObject' && 
+              fieldData.data.content.type === `${ZOMBIE_MODULE}::zombie::BeneficiaryData`) {
+            const address = fieldName.value?.fields?.key;
+            const dataFields = fieldData.data.content.fields as {
+              last_checkin: string;
+              threshold: string;
+              allocation: string;
+            };
+
+            if (address && dataFields) {
+              baseWallet.beneficiaries[address] = {
+                last_checkin: dataFields.last_checkin,
+                threshold: dataFields.threshold,
+                allocation: dataFields.allocation
+              };
+              baseWallet.beneficiary_addrs.push(address);
+            }
+          }
+        }
+
+        return baseWallet;
+      })
+    );
+
+    setWallets(walletsWithBeneficiaries.filter(Boolean) as ZombieWallet[]);
+  } catch (error) {
+    console.error("Failed to fetch wallets:", error);
+    setWallets([]);
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const createRegistry = async () => {
     if (!currentAccount?.address) throw new Error("No connected account");
@@ -146,7 +204,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   timeUnit: number
 ) => {
   if (!currentAccount?.address) throw new Error("No connected account");
-  
+
   // Convert SUI to MIST (1 SUI = 1e9 MIST)
   const allocationMist = Math.round(allocation * 1e9);
   
@@ -156,7 +214,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   const [depositCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(allocationMist)]);
 
   // Set explicit gas budget (0.2 SUI)
-  tx.setGasBudget(10000000); // 200 million MIST = 0.2 SUI
+  tx.setGasBudget(5000000); // 200 million MIST = 0.2 SUI
 
   tx.moveCall({
     target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,

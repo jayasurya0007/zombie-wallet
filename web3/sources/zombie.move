@@ -38,6 +38,20 @@ module zombiewallet::zombie {
         coin: Balance<SUI>
     }
 
+    /// Helper: Sum all beneficiary allocations
+    fun sum_allocations(beneficiaries: &Table<address, BeneficiaryData>, addrs: &vector<address>): u64 {
+        let mut sum = 0;
+        let len = vector::length(addrs);
+        let mut i = 0;
+        while (i < len) {
+            let addr = *vector::borrow(addrs, i);
+            let data = borrow(beneficiaries, addr);
+            sum = sum + data.allocation;
+            i = i + 1;
+        };
+        sum
+    }
+
     /// Create a new Registry object and transfer to sender
     public entry fun create_registry(ctx: &mut sui::tx_context::TxContext) {
         let registry = Registry {
@@ -93,6 +107,11 @@ module zombiewallet::zombie {
 
         add(&mut wallet.beneficiaries, beneficiary, data);
         vector::push_back(&mut wallet.beneficiary_addrs, beneficiary);
+
+        // Ensure coin balance matches sum of allocations
+        let total_alloc = sum_allocations(&wallet.beneficiaries, &wallet.beneficiary_addrs);
+        let bal = value(&wallet.coin);
+        assert!(bal == total_alloc, EInvalidAllocations);
     }
 
     /// Allow owner or any beneficiary to withdraw from the wallet
