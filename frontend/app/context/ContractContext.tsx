@@ -6,7 +6,15 @@ import {
   useSuiClient,
 } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
+import { ApolloClient, InMemoryCache, gql } from '@apollo/client';
+import { fromBase64 } from '@mysten/bcs';
 import { ZOMBIE_MODULE, REGISTRY_TYPE, ZOMBIE_WALLET_TYPE } from '@/config/constants';
+
+// Initialize Apollo Client
+const apolloClient = new ApolloClient({
+  uri: 'https://sui-testnet.mystenlabs.com/graphql',
+  cache: new InMemoryCache(),
+});
 
 interface BeneficiaryData {
   last_checkin: string;
@@ -40,6 +48,8 @@ interface ContractContextType {
   executeTransfer: (walletId: string) => Promise<void>;
   fetchRegistry: () => Promise<void>;
   fetchWallets: () => Promise<void>;
+  fetchWalletsGraphQL: () => Promise<ZombieWallet[]>;
+  fetchWalletDetailsGraphQL: (walletId: string) => Promise<ZombieWallet | null>;
   getCoins: () => Promise<{ coinObjectId: string, balance: string }[]>;
 }
 
@@ -52,6 +62,23 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   const [registry, setRegistry] = useState<any | null>(null);
   const [wallets, setWallets] = useState<ZombieWallet[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Helper function to convert byte array to address
+  const convertByteArrayToAddress = (bytes: number[]): string => {
+    return '0x' + bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  // Helper function to parse beneficiary data from BCS
+  const parseBeneficiaryData = (bcsData: string): BeneficiaryData => {
+    const bytes = fromBase64(bcsData);
+    const view = new DataView(bytes.buffer);
+    
+    return {
+      last_checkin: view.getBigUint64(0, true).toString(),
+      threshold: view.getBigUint64(8, true).toString(),
+      allocation: view.getBigUint64(16, true).toString(),
+    };
+  };
 
   const getCoins = async () => {
     if (!currentAccount?.address) return [];
@@ -92,80 +119,256 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   };
 
   const fetchWallets = async () => {
-  if (!currentAccount?.address) return;
-  setIsLoading(true);
-  try {
-    const response = await provider.getOwnedObjects({
-      owner: currentAccount.address,
-      filter: { StructType: ZOMBIE_WALLET_TYPE },
-      options: { showContent: true, showType: true },
-    });
+    if (!currentAccount?.address) return;
+    setIsLoading(true);
+    try {
+      const response = await provider.getOwnedObjects({
+        owner: currentAccount.address,
+        filter: { StructType: ZOMBIE_WALLET_TYPE },
+        options: { showContent: true, showType: true },
+      });
 
-    const walletsWithBeneficiaries = await Promise.all(
-      response.data.map(async (obj: any) => {
-        const walletContent = obj.data?.content;
-        if (!walletContent || walletContent.dataType !== 'moveObject') {
-          return null;
-        }
-
-        const baseWallet = {
-          id: obj.data.objectId,
-          owner: (walletContent.fields as { owner: string }).owner,
-          beneficiaries: {} as Record<string, BeneficiaryData>,
-          beneficiary_addrs: [] as string[],
-          coin: { 
-            balance: (walletContent.fields as { coin: { fields: { balance: string } }}).coin.fields?.balance 
+      const walletsWithBeneficiaries = await Promise.all(
+        response.data.map(async (obj: any) => {
+          const walletContent = obj.data?.content;
+          if (!walletContent || walletContent.dataType !== 'moveObject') {
+            return null;
           }
-        };
 
-        // Handle dynamic fields for beneficiaries
-        const dynamicFields = await provider.getDynamicFields({
-          parentId: obj.data.objectId,
-        });
-
-        for (const field of dynamicFields.data) {
-          const fieldName = field.name as { 
-            type: string;
-            value?: { fields?: { key?: string } };
+          const baseWallet = {
+            id: obj.data.objectId,
+            owner: (walletContent.fields as { owner: string }).owner,
+            beneficiaries: {} as Record<string, BeneficiaryData>,
+            beneficiary_addrs: [] as string[],
+            coin: { 
+              balance: (walletContent.fields as { coin: { fields: { balance: string } }}).coin.fields?.balance 
+            }
           };
-          
-          const fieldData = await provider.getDynamicFieldObject({
+
+          // Handle dynamic fields for beneficiaries
+          const dynamicFields = await provider.getDynamicFields({
             parentId: obj.data.objectId,
-            name: field.name,
           });
 
-          if (fieldData.data?.content?.dataType === 'moveObject' && 
-              fieldData.data.content.type === `${ZOMBIE_MODULE}::zombie::BeneficiaryData`) {
-            const address = fieldName.value?.fields?.key;
-            const dataFields = fieldData.data.content.fields as {
-              last_checkin: string;
-              threshold: string;
-              allocation: string;
+          for (const field of dynamicFields.data) {
+            const fieldName = field.name as { 
+              type: string;
+              value?: { fields?: { key?: string } };
             };
+            
+            const fieldData = await provider.getDynamicFieldObject({
+              parentId: obj.data.objectId,
+              name: field.name,
+            });
 
-            if (address && dataFields) {
-              baseWallet.beneficiaries[address] = {
-                last_checkin: dataFields.last_checkin,
-                threshold: dataFields.threshold,
-                allocation: dataFields.allocation
+            if (fieldData.data?.content?.dataType === 'moveObject' && 
+                fieldData.data.content.type === `${ZOMBIE_MODULE}::zombie::BeneficiaryData`) {
+              const address = fieldName.value?.fields?.key;
+              const dataFields = fieldData.data.content.fields as {
+                last_checkin: string;
+                threshold: string;
+                allocation: string;
               };
-              baseWallet.beneficiary_addrs.push(address);
+
+              if (address && dataFields) {
+                baseWallet.beneficiaries[address] = {
+                  last_checkin: dataFields.last_checkin,
+                  threshold: dataFields.threshold,
+                  allocation: dataFields.allocation
+                };
+                baseWallet.beneficiary_addrs.push(address);
+              }
+            }
+          }
+
+          return baseWallet;
+        })
+      );
+
+      setWallets(walletsWithBeneficiaries.filter(Boolean) as ZombieWallet[]);
+    } catch (error) {
+      console.error("Failed to fetch wallets:", error);
+      setWallets([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchWalletsGraphQL = async (): Promise<ZombieWallet[]> => {
+    if (!currentAccount?.address) return [];
+    
+    const GET_WALLETS = gql`
+      query GetWallets($owner: SuiAddress!) {
+        objects(
+          filter: {
+            owner: $owner
+            type: "${ZOMBIE_WALLET_TYPE}"
+          }
+          first: 10
+        ) {
+          nodes {
+            address
+            asMoveObject {
+              contents {
+                data
+              }
+              dynamicFields(first: 10) {
+                nodes {
+                  name {
+                    bcs
+                  }
+                  value {
+                    ... on MoveValue {
+                      type {
+                        repr
+                      }
+                      bcs
+                    }
+                  }
+                }
+              }
             }
           }
         }
+      }
+    `;
 
-        return baseWallet;
-      })
-    );
+    try {
+      const { data } = await apolloClient.query({
+        query: GET_WALLETS,
+        variables: { owner: currentAccount.address },
+      });
 
-    setWallets(walletsWithBeneficiaries.filter(Boolean) as ZombieWallet[]);
-  } catch (error) {
-    console.error("Failed to fetch wallets:", error);
-    setWallets([]);
-  } finally {
-    setIsLoading(false);
-  }
-};
+      return data.objects.nodes.map((node: any) => {
+        const content = node.asMoveObject.contents.data.Struct;
+        
+        // Extract owner
+        const ownerField = content.find((f: any) => f.name === "owner");
+        const owner = convertByteArrayToAddress(ownerField.value.Address);
+        
+        // Extract coin balance
+        const coinField = content.find((f: any) => f.name === "coin");
+        const balance = coinField.value.Struct[0].value.Number;
+
+        // Extract beneficiary addresses
+        const beneficiaryAddrsField = content.find((f: any) => f.name === "beneficiary_addrs");
+        const beneficiary_addrs = beneficiaryAddrsField.value.Vector.map((v: any) => 
+          convertByteArrayToAddress(v.Address)
+        );
+
+        // Process dynamic fields (beneficiaries)
+        const beneficiaries: Record<string, BeneficiaryData> = {};
+        
+        node.asMoveObject.dynamicFields.nodes.forEach((field: any) => {
+          try {
+            const nameBytes = fromBase64(field.name.bcs);
+            const nameView = new DataView(nameBytes.buffer);
+            const addressBytes = new Uint8Array(nameBytes.slice(0, 32));
+            const address = convertByteArrayToAddress(Array.from(addressBytes));
+            
+            const data = parseBeneficiaryData(field.value.bcs);
+            beneficiaries[address] = data;
+          } catch (error) {
+            console.error("Error parsing beneficiary field:", error);
+          }
+        });
+
+        return {
+          id: node.address,
+          owner,
+          beneficiaries,
+          beneficiary_addrs,
+          coin: { balance },
+        };
+      });
+    } catch (error) {
+      console.error("GraphQL query failed:", error);
+      return [];
+    }
+  };
+
+  const fetchWalletDetailsGraphQL = async (walletId: string): Promise<ZombieWallet | null> => {
+    const GET_WALLET_DETAILS = gql`
+      query GetWalletDetails($walletId: SuiAddress!) {
+        object(address: $walletId) {
+          address
+          asMoveObject {
+            contents {
+              data
+            }
+            dynamicFields(first: 10) {
+              nodes {
+                name {
+                  bcs
+                }
+                value {
+                  ... on MoveValue {
+                    type {
+                      repr
+                    }
+                    bcs
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      const { data } = await apolloClient.query({
+        query: GET_WALLET_DETAILS,
+        variables: { walletId },
+      });
+
+      if (!data.object) return null;
+      
+      const content = data.object.asMoveObject.contents.data.Struct;
+      
+      // Extract owner
+      const ownerField = content.find((f: any) => f.name === "owner");
+      const owner = convertByteArrayToAddress(ownerField.value.Address);
+      
+      // Extract coin balance
+      const coinField = content.find((f: any) => f.name === "coin");
+      const balance = coinField.value.Struct[0].value.Number;
+
+      // Extract beneficiary addresses
+      const beneficiaryAddrsField = content.find((f: any) => f.name === "beneficiary_addrs");
+      const beneficiary_addrs = beneficiaryAddrsField.value.Vector.map((v: any) => 
+        convertByteArrayToAddress(v.Address)
+      );
+
+      // Process dynamic fields (beneficiaries)
+      const beneficiaries: Record<string, BeneficiaryData> = {};
+      
+      data.object.asMoveObject.dynamicFields.nodes.forEach((field: any) => {
+        try {
+          const nameBytes = fromBase64(field.name.bcs);
+          const nameView = new DataView(nameBytes.buffer);
+          const addressBytes = new Uint8Array(nameBytes.slice(0, 32));
+          const address = convertByteArrayToAddress(Array.from(addressBytes));
+          
+          const data = parseBeneficiaryData(field.value.bcs);
+          beneficiaries[address] = data;
+        } catch (error) {
+          console.error("Error parsing beneficiary field:", error);
+        }
+      });
+
+      return {
+        id: data.object.address,
+        owner,
+        beneficiaries,
+        beneficiary_addrs,
+        coin: { balance },
+      };
+    } catch (error) {
+      console.error("GraphQL query failed:", error);
+      return null;
+    }
+  };
 
   const createRegistry = async () => {
     if (!currentAccount?.address) throw new Error("No connected account");
@@ -195,52 +398,50 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     await fetchWallets();
   };
 
-  // --- FINAL, ROBUST addBeneficiary ---
   const addBeneficiary = async (
-  walletId: string,
-  beneficiary: string,
-  allocation: number,
-  duration: number,
-  timeUnit: number
-) => {
-  if (!currentAccount?.address) throw new Error("No connected account");
+    walletId: string,
+    beneficiary: string,
+    allocation: number,
+    duration: number,
+    timeUnit: number
+  ) => {
+    if (!currentAccount?.address) throw new Error("No connected account");
 
-  // Convert SUI to MIST (1 SUI = 1e9 MIST)
-  const allocationMist = Math.round(allocation * 1e9);
-  
-  const tx = new Transaction();
+    // Convert SUI to MIST (1 SUI = 1e9 MIST)
+    const allocationMist = Math.round(allocation * 1e9);
+    
+    const tx = new Transaction();
 
-  // Correct method name and syntax for splitting coins
-  const [depositCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(allocationMist)]);
+    // Correct method name and syntax for splitting coins
+    const [depositCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(allocationMist)]);
 
-  // Set explicit gas budget (0.2 SUI)
-  tx.setGasBudget(5000000); // 200 million MIST = 0.2 SUI
+    // Set explicit gas budget (0.2 SUI)
+    tx.setGasBudget(5000000); // 200 million MIST = 0.2 SUI
 
-  tx.moveCall({
-    target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
-    arguments: [
-      tx.object(walletId),
-      tx.pure.address(beneficiary),
-      tx.pure.u64(allocationMist),
-      tx.pure.u64(duration),
-      tx.pure.u8(timeUnit),
-      depositCoin,
-      tx.object('0x6'), // Clock object
-    ],
-  });
-
-  try {
-    await signAndExecuteTransactionBlock({
-      transaction: tx,
+    tx.moveCall({
+      target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
+      arguments: [
+        tx.object(walletId),
+        tx.pure.address(beneficiary),
+        tx.pure.u64(allocationMist),
+        tx.pure.u64(duration),
+        tx.pure.u8(timeUnit),
+        depositCoin,
+        tx.object('0x6'), // Clock object
+      ],
     });
-    await fetchWallets();
-  } catch (error) {
-    console.error("Transaction failed:", error);
-    // Proper error message handling
-    const message = error instanceof Error ? error.message : 'Unknown error occurred';
-    throw new Error(`Transaction failed: ${message}`);
-  }
-};
+
+    try {
+      await signAndExecuteTransactionBlock({
+        transaction: tx,
+      });
+      await fetchWallets();
+    } catch (error) {
+      console.error("Transaction failed:", error);
+      const message = error instanceof Error ? error.message : 'Unknown error occurred';
+      throw new Error(`Transaction failed: ${message}`);
+    }
+  };
 
   const withdraw = async (walletId: string, amount: number) => {
     const tx = new Transaction();
@@ -278,10 +479,12 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         createRegistry,
         createWallet,
         addBeneficiary,
-        withdraw, // Renamed from ownerWithdraw
-        executeTransfer, // Updated signature
+        withdraw,
+        executeTransfer,
         fetchRegistry,
         fetchWallets,
+        fetchWalletsGraphQL,
+        fetchWalletDetailsGraphQL,
         getCoins,
       }}
     >

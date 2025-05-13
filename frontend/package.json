@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@apollo/client": "^3.13.8",
     "@mysten/dapp-kit": "^0.16.2",
     "@mysten/sui": "^1.29.1",
     "@mysten/wallet-kit": "^0.8.6",
@@ -19,6 +20,8 @@
     "aptos": "^1.21.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "graphql": "^16.11.0",
+    "graphql-request": "^7.1.2",
     "lucide-react": "^0.509.0",
     "next": "^15.3.1",
     "react": "^19.1.0",
