@@ -1,5 +1,5 @@
 'use client';
-import { useContract } from '@/app/context/ContractContext';
+import { useContract,BeneficiaryData } from '@/app/context/ContractContext';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { useState, useEffect } from 'react';
 import { formatBalance } from '@/lib/utils';
@@ -28,9 +28,9 @@ export default function Dashboard() {
     addBeneficiary,
     withdraw,
     executeTransfer,
-    fetchRegistry,
-    fetchWallets,
     fetchWalletsGraphQL,
+    get_beneficiary_addrs,
+    get_beneficiary_data,
   } = useContract();
 
   const currentAccount = useCurrentAccount();
@@ -45,14 +45,45 @@ export default function Dashboard() {
     timeUnit: 0,
   });
   const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [beneficiaryAddrs, setBeneficiaryAddrs] = useState<string[]>([]);
+  const [beneficiariesData, setBeneficiariesData] = useState<Record<string, BeneficiaryData>>({});
+  const [loadingBeneficiaries, setLoadingBeneficiaries] = useState(false);
 
   useEffect(() => {
     if (isConnected && currentAccount?.address) {
-      fetchRegistry();
-      fetchWallets();
       fetchWalletsGraphQL();
+      console.log(beneficiariesData);
     }
   }, [isConnected, currentAccount?.address]);
+
+  useEffect(() => {
+    const loadBeneficiaries = async () => {
+      if (!selectedWallet) return;
+      setLoadingBeneficiaries(true);
+      
+      try {
+        // Fetch beneficiary addresses from the wallet's 'beneficiary_addrs' field
+        const addrs = await get_beneficiary_addrs(selectedWallet);
+        setBeneficiaryAddrs(addrs);
+
+        // Fetch each beneficiary's data from the table
+        const data: Record<string, BeneficiaryData> = {};
+        for (const addr of addrs) {
+          const beneficiary = await get_beneficiary_data(selectedWallet, addr);
+          if (beneficiary) {
+            data[addr] = beneficiary;
+          }
+        }
+        setBeneficiariesData(data);
+      } catch (error) {
+        console.error('Failed to load beneficiaries:', error);
+      } finally {
+        setLoadingBeneficiaries(false);
+      }
+    };
+
+    loadBeneficiaries();
+  }, [selectedWallet, get_beneficiary_addrs, get_beneficiary_data]);
 
   const handleCreateRegistry = async () => await createRegistry();
   const handleCreateWallet = async () => registry?.objectId && await createWallet(registry.objectId);
@@ -87,6 +118,8 @@ export default function Dashboard() {
   const handleExecuteTransfer = async (walletId: string) => {
     await executeTransfer(walletId);
     await fetchWalletsGraphQL();
+    setBeneficiaryAddrs([]);
+    setBeneficiariesData({});
   };
 
   if (!registry) {
@@ -147,7 +180,9 @@ export default function Dashboard() {
                 <h3 className="text-xl font-semibold mb-2">
                   Wallet: {wallet.id.slice(0, 8)}...{wallet.id.slice(-4)}
                 </h3>
-                <p className="mb-4">Balance: {formatBalance(balance.toString())} SUI</p>
+                <p className="mb-4">
+                  Balance: {formatBalance(balance.toString())} SUI
+                </p>
                 <div className="space-y-2">
                   <button
                     onClick={() => {
@@ -199,23 +234,23 @@ export default function Dashboard() {
       {activeTab === 'beneficiaries' && selectedWallet && (
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-2xl font-semibold mb-4">Beneficiaries</h2>
-          {wallets
-            .find(w => w.id === selectedWallet)
-            ?.beneficiary_addrs
-            ?.map((addr) => {
-              const beneficiary = wallets
-                .find(w => w.id === selectedWallet)
-                ?.beneficiaries[addr];
-              
+          {loadingBeneficiaries ? (
+            <div className="text-center py-4">Loading beneficiaries...</div>
+          ) : beneficiaryAddrs.length === 0 ? (
+            <div className="text-center py-4">No beneficiaries found</div>
+          ) : (
+            beneficiaryAddrs.map((addr) => {
+              const beneficiary = beneficiariesData[addr];
               if (!beneficiary) return null;
 
               return (
                 <div key={addr} className="bg-gray-50 p-4 mb-4 rounded shadow">
-                  <p className="font-mono break-all">
-                    Address: {addr}
-                  </p>
-                  <p>Allocation: {formatBalance(extractU64(beneficiary.allocation).toString())} SUI</p>
-                  <p>Threshold: {Math.floor(extractU64(beneficiary.threshold) / 1000)} seconds</p>
+                  <p className="font-mono break-all">Address: {addr}</p>
+                  <p>Allocation: {formatBalance(beneficiary.allocation)} SUI</p>
+                  <p>Last Checkin: {
+                    new Date(Number(beneficiary.last_checkin)).toLocaleString()
+                  }</p>
+                  <p>Threshold: {Math.floor(extractU64(beneficiary.threshold)/60)} minutes</p>
                   <button
                     onClick={() => handleExecuteTransfer(selectedWallet)}
                     className="mt-2 bg-purple-100 hover:bg-purple-200 text-purple-800 py-1 px-3 rounded"
@@ -224,7 +259,8 @@ export default function Dashboard() {
                   </button>
                 </div>
               );
-            })}
+            })
+          )}
         </div>
       )}
 

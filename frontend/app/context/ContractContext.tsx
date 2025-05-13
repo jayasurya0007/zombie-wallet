@@ -1,3 +1,4 @@
+// ContractContext.tsx
 'use client';
 import { createContext, useContext, useEffect, useState } from 'react';
 import {
@@ -70,8 +71,12 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
 
   // Helper function to convert byte array to address
-  const convertByteArrayToAddress = (bytes: number[]): string => {
-    return '0x' + bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+  const convertByteArrayToAddress = (bytes: number[] | Uint8Array): string => {
+    const byteArray = Array.isArray(bytes) ? bytes : Array.from(bytes);
+    return '0x' + byteArray
+      .slice(0, 32) // Ensure only 32 bytes are used
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
   };
 
   // Helper function to parse beneficiary data from BCS
@@ -80,7 +85,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     const view = new DataView(bytes.buffer);
     
     return {
-      last_checkin: view.getBigUint64(0, true).toString(),
+      last_checkin: view.getBigUint64(0, true).toString(), // Little-endian
       threshold: view.getBigUint64(8, true).toString(),
       allocation: view.getBigUint64(16, true).toString(),
     };
@@ -489,9 +494,46 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     await fetchWallets();
   };
 
+  
   const get_beneficiary_addrs = async (walletId: string): Promise<string[]> => {
-  const GET_BENEFICIARY_ADDRS = gql`
-    query GetWalletBeneficiaryAddrs($walletId: SuiAddress!) {
+    const GET_WALLET_DETAILS = gql`
+      query GetWalletDetails($walletId: SuiAddress!) {
+        object(address: $walletId) {
+          asMoveObject {
+            contents {
+              data
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      const { data } = await apolloClient.query({
+        query: GET_WALLET_DETAILS,
+        variables: { walletId },
+      });
+
+      if (!data.object?.asMoveObject?.contents?.data?.Struct) return [];
+      
+      const content = data.object.asMoveObject.contents.data.Struct;
+      const beneficiaryAddrsField = content.find((f: any) => f.name === "beneficiary_addrs");
+      
+      return beneficiaryAddrsField?.value?.Vector?.map((v: any) => 
+        convertByteArrayToAddress(v.Address)
+      ) || [];
+    } catch (error) {
+      console.error("Failed to fetch beneficiary addresses:", error);
+      return [];
+    }
+  };
+
+  const get_beneficiary_data = async (
+  walletId: string,
+  beneficiaryAddr: string
+): Promise<BeneficiaryData | null> => {
+  const GET_WALLET_DETAILS = gql`
+    query GetWalletDetails($walletId: SuiAddress!) {
       object(address: $walletId) {
         asMoveObject {
           contents {
@@ -503,75 +545,66 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   `;
 
   try {
-    const { data } = await apolloClient.query({
-      query: GET_BENEFICIARY_ADDRS,
+    // Fetch wallet details to get the beneficiaries table ID
+    const { data: walletData } = await apolloClient.query({
+      query: GET_WALLET_DETAILS,
       variables: { walletId },
     });
 
-    if (!data.object?.asMoveObject?.contents?.data?.Struct) return [];
+    const walletContent = walletData.object?.asMoveObject?.contents?.data?.Struct;
+    if (!walletContent) return null;
 
-    const content = data.object.asMoveObject.contents.data.Struct;
-    const beneficiaryAddrsField = content.find((f: any) => f.name === "beneficiary_addrs");
-    if (!beneficiaryAddrsField) return [];
-
-    // Convert byte arrays to addresses
-    return beneficiaryAddrsField.value.Vector.map((v: any) =>
-      convertByteArrayToAddress(v.Address)
+    // Extract the beneficiaries table ID
+    const beneficiariesField = walletContent.find((f: any) => f.name === "beneficiaries");
+    const beneficiariesTableId = convertByteArrayToAddress(
+      beneficiariesField?.value?.Struct?.[0]?.value?.UID // Access the 'id' field of the Table
     );
-  } catch (error) {
-    console.error("GraphQL get_beneficiary_addrs failed:", error);
-    return [];
-  }
-};
 
-  const get_beneficiary_data = async (
-  walletId: string,
-  beneficiary: string
-): Promise<BeneficiaryData | null> => {
-  const GET_BENEFICIARY_DATA = gql`
-    query GetWalletBeneficiaryData($walletId: SuiAddress!) {
-      object(address: $walletId) {
-        asMoveObject {
-          dynamicFields(first: 50) {
-            nodes {
-              name {
-                bcs
-              }
-              value {
-                ... on MoveValue {
-                  type {
-                    repr
-                  }
+    if (!beneficiariesTableId) return null;
+
+    // Fetch dynamic fields of the beneficiaries table
+    const GET_TABLE_DYNAMIC_FIELDS = gql`
+      query GetTableDynamicFields($tableId: SuiAddress!) {
+        object(address: $tableId) {
+          asMoveObject {
+            dynamicFields(first: 10) {
+              nodes {
+                name {
                   bcs
+                }
+                value {
+                  ... on MoveValue {
+                    bcs
+                  }
                 }
               }
             }
           }
         }
       }
-    }
-  `;
+    `;
 
-  try {
-    const { data } = await apolloClient.query({
-      query: GET_BENEFICIARY_DATA,
-      variables: { walletId },
+    const { data: tableData } = await apolloClient.query({
+      query: GET_TABLE_DYNAMIC_FIELDS,
+      variables: { tableId: beneficiariesTableId },
     });
 
-    const dynamicFields = data.object?.asMoveObject?.dynamicFields?.nodes || [];
+    const dynamicFields = tableData.object?.asMoveObject?.dynamicFields?.nodes || [];
+
+    // Iterate through dynamic fields to find the matching beneficiary address
     for (const field of dynamicFields) {
-      // Extract address from field name (first 32 bytes)
       const nameBytes = fromBase64(field.name.bcs);
-      const addressBytes = Array.from(new Uint8Array(nameBytes.slice(0, 32)));
+      const addressBytes = new Uint8Array(nameBytes.slice(0, 32));
       const address = convertByteArrayToAddress(addressBytes);
 
-      if (address.toLowerCase() === beneficiary.toLowerCase()) {
+      if (address === beneficiaryAddr) {
         return parseBeneficiaryData(field.value.bcs);
       }
     }
+
     return null;
   } catch (error) {
-    console.error("GraphQL get_beneficiary_data failed:", error);
+    console.error("Failed to fetch beneficiary data:", error);
     return null;
   }
 };
