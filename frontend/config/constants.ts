@@ -1,3 +1,3 @@
-export const ZOMBIE_MODULE = '0x36be0c8f781ba37c144916420ea6d2f0fad3992b8996e3503c80afd0ee4237eb';
+export const ZOMBIE_MODULE = '0x19697b663c02c78ed62283b7f26c75e1eac9654cc3549dec278d0fb578531490';
 export const REGISTRY_TYPE = `${ZOMBIE_MODULE}::zombie::Registry`;
 export const ZOMBIE_WALLET_TYPE = `${ZOMBIE_MODULE}::zombie::ZombieWallet`;

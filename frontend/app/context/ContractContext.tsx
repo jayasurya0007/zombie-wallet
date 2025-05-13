@@ -51,6 +51,12 @@ interface ContractContextType {
   fetchWalletsGraphQL: () => Promise<ZombieWallet[]>;
   fetchWalletDetailsGraphQL: (walletId: string) => Promise<ZombieWallet | null>;
   getCoins: () => Promise<{ coinObjectId: string, balance: string }[]>;
+  checkin: (walletId: string, beneficiary: string) => Promise<void>;
+  get_beneficiary_addrs: (walletId: string) => Promise<string[]>;
+  get_beneficiary_data: (
+    walletId: string, 
+    beneficiary: string
+  ) => Promise<BeneficiaryData | null>;
 }
 
 const ContractContext = createContext<ContractContextType>({} as ContractContextType);
@@ -430,7 +436,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     const [depositCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(allocationMist)]);
 
     // Set explicit gas budget (0.2 SUI)
-    tx.setGasBudget(5000000); // 200 million MIST = 0.2 SUI
+    tx.setGasBudget(20000000); // 200 million MIST = 0.2 SUI
 
     tx.moveCall({
       target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
@@ -483,6 +489,109 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     await fetchWallets();
   };
 
+  const get_beneficiary_addrs = async (walletId: string): Promise<string[]> => {
+  const GET_BENEFICIARY_ADDRS = gql`
+    query GetWalletBeneficiaryAddrs($walletId: SuiAddress!) {
+      object(address: $walletId) {
+        asMoveObject {
+          contents {
+            data
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const { data } = await apolloClient.query({
+      query: GET_BENEFICIARY_ADDRS,
+      variables: { walletId },
+    });
+
+    if (!data.object?.asMoveObject?.contents?.data?.Struct) return [];
+
+    const content = data.object.asMoveObject.contents.data.Struct;
+    const beneficiaryAddrsField = content.find((f: any) => f.name === "beneficiary_addrs");
+    if (!beneficiaryAddrsField) return [];
+
+    // Convert byte arrays to addresses
+    return beneficiaryAddrsField.value.Vector.map((v: any) =>
+      convertByteArrayToAddress(v.Address)
+    );
+  } catch (error) {
+    console.error("GraphQL get_beneficiary_addrs failed:", error);
+    return [];
+  }
+};
+
+  const get_beneficiary_data = async (
+  walletId: string,
+  beneficiary: string
+): Promise<BeneficiaryData | null> => {
+  const GET_BENEFICIARY_DATA = gql`
+    query GetWalletBeneficiaryData($walletId: SuiAddress!) {
+      object(address: $walletId) {
+        asMoveObject {
+          dynamicFields(first: 50) {
+            nodes {
+              name {
+                bcs
+              }
+              value {
+                ... on MoveValue {
+                  type {
+                    repr
+                  }
+                  bcs
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const { data } = await apolloClient.query({
+      query: GET_BENEFICIARY_DATA,
+      variables: { walletId },
+    });
+
+    const dynamicFields = data.object?.asMoveObject?.dynamicFields?.nodes || [];
+    for (const field of dynamicFields) {
+      // Extract address from field name (first 32 bytes)
+      const nameBytes = fromBase64(field.name.bcs);
+      const addressBytes = Array.from(new Uint8Array(nameBytes.slice(0, 32)));
+      const address = convertByteArrayToAddress(addressBytes);
+
+      if (address.toLowerCase() === beneficiary.toLowerCase()) {
+        return parseBeneficiaryData(field.value.bcs);
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error("GraphQL get_beneficiary_data failed:", error);
+    return null;
+  }
+};
+
+
+  const checkin = async (walletId: string, beneficiary: string) => {
+      const tx = new Transaction();
+      tx.moveCall({
+        target: `${ZOMBIE_MODULE}::zombie::checkin`,
+        arguments: [
+          tx.object(walletId),
+          tx.pure.address(beneficiary),
+          tx.object('0x6'), // Clock object
+        ],
+      });
+      await signAndExecuteTransactionBlock({ transaction: tx });
+      await fetchWallets();
+    };
+
+
   return (
     <ContractContext.Provider
       value={{
@@ -500,6 +609,9 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         fetchWalletsGraphQL,
         fetchWalletDetailsGraphQL,
         getCoins,
+        checkin,
+        get_beneficiary_addrs,
+        get_beneficiary_data,
       }}
     >
       {children}

@@ -3,21 +3,19 @@ import { useContract } from '@/app/context/ContractContext';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { useState, useEffect } from 'react';
 import { formatBalance } from '@/lib/utils';
-import { AptosClient } from "aptos";
-import { ZOMBIE_MODULE, REGISTRY_TYPE, ZOMBIE_WALLET_TYPE } from '@/config/constants';
 
-
-
-
-function extractU64(val: any): number {
+function extractU64(val: unknown): number {
   if (typeof val === 'number') return val;
   if (typeof val === 'string') return Number(val);
-  if (val?.fields?.value) return Number(val.fields.value);
-  if (val?.value) return Number(val.value);
+  if (val && typeof val === 'object') {
+    if ('value' in val) return Number((val as { value: string | number }).value);
+    if ('fields' in val) {
+      const fields = (val as { fields: Record<string, unknown> }).fields;
+      if ('value' in fields) return Number(fields.value);
+    }
+  }
   return 0;
 }
-
-
 
 export default function Dashboard() {
   const {
@@ -32,6 +30,7 @@ export default function Dashboard() {
     executeTransfer,
     fetchRegistry,
     fetchWallets,
+    fetchWalletsGraphQL,
   } = useContract();
 
   const currentAccount = useCurrentAccount();
@@ -47,64 +46,26 @@ export default function Dashboard() {
   });
   const [withdrawAmount, setWithdrawAmount] = useState('');
 
-  async function fetchZombieWallet(address: string) {
-  try {
-    // Fetch the account's resources
-    const client = new AptosClient("https://fullnode.testnet.aptoslabs.com"); // or testnet/devnet URL
-    const resources = await client.getAccountResources(address);
-    
-    // Find the ZombieWallet resource
-    const zombieWalletResource = resources.find((resource) => 
-      resource.type === ZOMBIE_WALLET_TYPE
-    );
-
-    if (zombieWalletResource) {
-      console.log('Zombie Wallet:', zombieWalletResource.data);
-    } else {
-      console.log('Zombie Wallet not found for this address.');
-    }
-  } catch (error) {
-    console.error('Error fetching Zombie Wallet:', error);
-  }
-}
-
-
-
   useEffect(() => {
     if (isConnected && currentAccount?.address) {
       fetchRegistry();
       fetchWallets();
+      fetchWalletsGraphQL();
     }
   }, [isConnected, currentAccount?.address]);
 
-  const getWalletId = (wallet: any): string => {
-    if (!wallet) return 'unknown-id';
-    console.log('wallet:', wallet);
-    // Example: Fetch Zombie Wallet for a specific address
-    fetchZombieWallet('0x90465c9f240415ed71e68eebbda9e28d8b36fb26ff2764e2d24a89801c6d2337');
-    return typeof wallet.id === 'string'
-      ? wallet.id
-      : wallet.id?.id || wallet.id?.fields?.id || 'unknown-id';
-      
-  };
-
-  const handleCreateRegistry = async () => {
-    await createRegistry();
-  };
-
-  const handleCreateWallet = async () => {
-    if (registry?.objectId) {
-      await createWallet(registry.objectId);
-    }
-  };
+  const handleCreateRegistry = async () => await createRegistry();
+  const handleCreateWallet = async () => registry?.objectId && await createWallet(registry.objectId);
 
   const handleAddBeneficiary = async () => {
     if (!selectedWallet) return;
     const allocation = Number(beneficiaryForm.allocation);
+    
     if (isNaN(allocation) || allocation <= 0) {
       alert('Please enter a valid allocation amount');
       return;
     }
+    
     await addBeneficiary(
       selectedWallet,
       beneficiaryForm.address,
@@ -112,9 +73,9 @@ export default function Dashboard() {
       Number(beneficiaryForm.duration),
       beneficiaryForm.timeUnit
     );
-    await fetchWallets();
     setShowAddBeneficiary(false);
     setBeneficiaryForm({ address: '', allocation: '', duration: '', timeUnit: 0 });
+    await fetchWalletsGraphQL();
   };
 
   const handleWithdraw = async (walletId: string) => {
@@ -125,13 +86,13 @@ export default function Dashboard() {
 
   const handleExecuteTransfer = async (walletId: string) => {
     await executeTransfer(walletId);
+    await fetchWalletsGraphQL();
   };
 
   if (!registry) {
     return (
       <div className="max-w-md mx-auto mt-12 p-6 bg-white rounded-lg shadow-md">
         <h2 className="text-2xl font-bold mb-4">Welcome to ZombieWallet</h2>
-        <p className="mb-6">Create a registry to begin.</p>
         <button
           onClick={handleCreateRegistry}
           disabled={isLoading}
@@ -161,6 +122,7 @@ export default function Dashboard() {
   return (
     <div className="container mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold mb-6">ZombieWallet Dashboard</h1>
+      
       <div className="flex mb-6 border-b">
         <button
           className={`py-2 px-4 font-medium ${activeTab === 'wallets' ? 'border-b-2 border-blue-500' : ''}`}
@@ -179,21 +141,17 @@ export default function Dashboard() {
       {activeTab === 'wallets' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {wallets.map((wallet) => {
-            const walletId = getWalletId(wallet);
-            const displayId = `${walletId.slice(0, 8)}...${walletId.slice(-4)}`;
-            const balance = extractU64(wallet.coin?.balance || 0);
-            console.log('wallet.beneficiary_addrs:', wallet.beneficiary_addrs);// Shows array content
-            console.log('wallet.beneficiaries:', JSON.stringify(wallet.beneficiaries, null, 2)); // Pretty print object
-            console.log('wallet.coin:', wallet.coin);
-            console.log("balance",balance);
+            const balance = extractU64(wallet.coin?.balance);
             return (
-              <div key={walletId} className="bg-white p-6 rounded-lg shadow-md">
-                <h3 className="text-xl font-semibold mb-2">Wallet: {displayId}</h3>
+              <div key={wallet.id} className="bg-white p-6 rounded-lg shadow-md">
+                <h3 className="text-xl font-semibold mb-2">
+                  Wallet: {wallet.id.slice(0, 8)}...{wallet.id.slice(-4)}
+                </h3>
                 <p className="mb-4">Balance: {formatBalance(balance.toString())} SUI</p>
                 <div className="space-y-2">
                   <button
                     onClick={() => {
-                      setSelectedWallet(walletId);
+                      setSelectedWallet(wallet.id);
                       setShowAddBeneficiary(true);
                     }}
                     className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 py-2 px-4 rounded"
@@ -201,12 +159,12 @@ export default function Dashboard() {
                     Add Beneficiary
                   </button>
                   <button
-                    onClick={() => setShowWithdrawForm(walletId)}
+                    onClick={() => setShowWithdrawForm(wallet.id)}
                     className="w-full bg-green-100 hover:bg-green-200 text-green-800 py-2 px-4 rounded"
                   >
                     Withdraw Funds
                   </button>
-                  {showWithdrawForm === walletId && (
+                  {showWithdrawForm === wallet.id && (
                     <div className="mt-4 bg-gray-100 p-3 rounded">
                       <input
                         type="number"
@@ -217,7 +175,7 @@ export default function Dashboard() {
                       />
                       <div className="flex space-x-2">
                         <button
-                          onClick={() => handleWithdraw(walletId)}
+                          onClick={() => handleWithdraw(wallet.id)}
                           className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded"
                         >
                           Confirm
@@ -239,28 +197,34 @@ export default function Dashboard() {
       )}
 
       {activeTab === 'beneficiaries' && selectedWallet && (
-        <div>
+        <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-2xl font-semibold mb-4">Beneficiaries</h2>
-          {(wallets.find(w => getWalletId(w) === selectedWallet)?.beneficiaries || {}) &&
-            Object.entries(wallets.find(w => getWalletId(w) === selectedWallet)?.beneficiaries || {})
-              .filter(([addr]) => /^0x[a-fA-F0-9]{40,}$/.test(addr))
-              .map(([addr, data]) => {
-                const allocation = extractU64(data.allocation);
-                const threshold = extractU64(data.threshold);
-                return (
-                  <div key={addr} className="bg-white p-4 mb-4 rounded shadow">
-                    <p>Address: {addr.slice(0, 8)}...{addr.slice(-4)}</p>
-                    <p>Allocation: {formatBalance(allocation.toString())} SUI</p>
-                    <p>Threshold: {threshold} seconds</p>
-                    <button
-                      onClick={() => handleExecuteTransfer(selectedWallet)}
-                      className="mt-2 bg-purple-100 hover:bg-purple-200 text-purple-800 py-1 px-3 rounded"
-                    >
-                      Execute Transfer
-                    </button>
-                  </div>
-                );
-              })}
+          {wallets
+            .find(w => w.id === selectedWallet)
+            ?.beneficiary_addrs
+            ?.map((addr) => {
+              const beneficiary = wallets
+                .find(w => w.id === selectedWallet)
+                ?.beneficiaries[addr];
+              
+              if (!beneficiary) return null;
+
+              return (
+                <div key={addr} className="bg-gray-50 p-4 mb-4 rounded shadow">
+                  <p className="font-mono break-all">
+                    Address: {addr}
+                  </p>
+                  <p>Allocation: {formatBalance(extractU64(beneficiary.allocation).toString())} SUI</p>
+                  <p>Threshold: {Math.floor(extractU64(beneficiary.threshold) / 1000)} seconds</p>
+                  <button
+                    onClick={() => handleExecuteTransfer(selectedWallet)}
+                    className="mt-2 bg-purple-100 hover:bg-purple-200 text-purple-800 py-1 px-3 rounded"
+                  >
+                    Execute Transfer
+                  </button>
+                </div>
+              );
+            })}
         </div>
       )}
 

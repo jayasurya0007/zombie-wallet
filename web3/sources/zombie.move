@@ -214,4 +214,17 @@ module zombiewallet::zombie {
         // Delete the wallet's UID
         delete(id);
     }
+
+    /// Accessor: Get all beneficiary addresses
+    public fun get_beneficiary_addrs(wallet: &ZombieWallet): &vector<address> {
+        &wallet.beneficiary_addrs
+    }
+
+    /// Accessor: Get beneficiary data for a given address
+    public fun get_beneficiary_data(
+        wallet: &ZombieWallet,
+        addr: address
+    ): &BeneficiaryData {
+        borrow(&wallet.beneficiaries, addr)
+    }
 }
