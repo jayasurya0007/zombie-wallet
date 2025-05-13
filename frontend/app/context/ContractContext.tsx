@@ -16,13 +16,13 @@ const apolloClient = new ApolloClient({
   cache: new InMemoryCache(),
 });
 
-interface BeneficiaryData {
+export interface BeneficiaryData {
   last_checkin: string;
   threshold: string;
   allocation: string;
 }
 
-interface ZombieWallet {
+export interface ZombieWallet {
   id: string;
   owner: string;
   beneficiaries: Record<string, BeneficiaryData>;
@@ -119,21 +119,21 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   };
 
   const fetchWallets = async () => {
-    if (!currentAccount?.address) return;
-    setIsLoading(true);
-    try {
-      const response = await provider.getOwnedObjects({
-        owner: currentAccount.address,
-        filter: { StructType: ZOMBIE_WALLET_TYPE },
-        options: { showContent: true, showType: true },
-      });
+  if (!currentAccount?.address || !provider) return;
+  
+  setIsLoading(true);
+  try {
+    const response = await provider.getOwnedObjects({
+      owner: currentAccount.address,
+      filter: { StructType: ZOMBIE_WALLET_TYPE },
+      options: { showContent: true, showType: true },
+    });
 
-      const walletsWithBeneficiaries = await Promise.all(
-        response.data.map(async (obj: any) => {
+    const walletsWithBeneficiaries = await Promise.all(
+      response.data.map(async (obj: any) => {
+        try {
           const walletContent = obj.data?.content;
-          if (!walletContent || walletContent.dataType !== 'moveObject') {
-            return null;
-          }
+          if (!walletContent || walletContent.dataType !== 'moveObject') return null;
 
           const baseWallet = {
             id: obj.data.objectId,
@@ -145,55 +145,69 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
             }
           };
 
-          // Handle dynamic fields for beneficiaries
-          const dynamicFields = await provider.getDynamicFields({
-            parentId: obj.data.objectId,
-          });
-
-          for (const field of dynamicFields.data) {
-            const fieldName = field.name as { 
-              type: string;
-              value?: { fields?: { key?: string } };
-            };
-            
-            const fieldData = await provider.getDynamicFieldObject({
+          // Handle dynamic fields with pagination
+          let cursor: string | null = null;
+          let hasNextPage = true;
+          
+          while (hasNextPage) {
+            const dynamicFieldsResponse = await provider.getDynamicFields({
               parentId: obj.data.objectId,
-              name: field.name,
+              cursor,
             });
 
-            if (fieldData.data?.content?.dataType === 'moveObject' && 
-                fieldData.data.content.type === `${ZOMBIE_MODULE}::zombie::BeneficiaryData`) {
-              const address = fieldName.value?.fields?.key;
-              const dataFields = fieldData.data.content.fields as {
-                last_checkin: string;
-                threshold: string;
-                allocation: string;
-              };
+            // Process current page of fields
+            await Promise.all(
+              dynamicFieldsResponse.data.map(async (field) => {
+                try {
+                  const fieldData = await provider.getDynamicFieldObject({
+                    parentId: obj.data.objectId,
+                    name: field.name,
+                  });
 
-              if (address && dataFields) {
-                baseWallet.beneficiaries[address] = {
-                  last_checkin: dataFields.last_checkin,
-                  threshold: dataFields.threshold,
-                  allocation: dataFields.allocation
-                };
-                baseWallet.beneficiary_addrs.push(address);
-              }
-            }
+                  if (fieldData.data?.content?.dataType === 'moveObject' && 
+                      fieldData.data.content.type === `${ZOMBIE_MODULE}::zombie::BeneficiaryData`) {
+                    const address = (field.name as any).value?.fields?.key;
+                    const dataFields = fieldData.data.content.fields as {
+                      last_checkin: string;
+                      threshold: string;
+                      allocation: string;
+                    };
+
+                    if (address && dataFields) {
+                      baseWallet.beneficiaries[address] = {
+                        last_checkin: dataFields.last_checkin,
+                        threshold: dataFields.threshold,
+                        allocation: dataFields.allocation
+                      };
+                      baseWallet.beneficiary_addrs.push(address);
+                    }
+                  }
+                } catch (error) {
+                  console.error('Error processing dynamic field:', error);
+                }
+              })
+            );
+
+            cursor = dynamicFieldsResponse.nextCursor;
+            hasNextPage = dynamicFieldsResponse.hasNextPage;
           }
 
           return baseWallet;
-        })
-      );
+        } catch (error) {
+          console.error('Error processing wallet:', error);
+          return null;
+        }
+      })
+    );
 
-      setWallets(walletsWithBeneficiaries.filter(Boolean) as ZombieWallet[]);
-    } catch (error) {
-      console.error("Failed to fetch wallets:", error);
-      setWallets([]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
+    setWallets(walletsWithBeneficiaries.filter(Boolean) as ZombieWallet[]);
+  } catch (error) {
+    console.error("Failed to fetch wallets:", error);
+    setWallets([]);
+  } finally {
+    setIsLoading(false);
+  }
+};
   const fetchWalletsGraphQL = async (): Promise<ZombieWallet[]> => {
     if (!currentAccount?.address) return [];
     
