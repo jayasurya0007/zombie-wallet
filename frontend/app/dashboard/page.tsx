@@ -1,8 +1,9 @@
 'use client';
-import { useContract,BeneficiaryData } from '@/app/context/ContractContext';
+import { useContract, BeneficiaryData } from '@/app/context/ContractContext';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { useState, useEffect } from 'react';
 import { formatBalance } from '@/lib/utils';
+import { ZombieWalletBeneficiary } from '@/app/components/ZombieWalletBeneficiary';
 
 function extractU64(val: unknown): number {
   if (typeof val === 'number') return val;
@@ -52,7 +53,6 @@ export default function Dashboard() {
   useEffect(() => {
     if (isConnected && currentAccount?.address) {
       fetchWalletsGraphQL();
-      console.log(beneficiariesData);
     }
   }, [isConnected, currentAccount?.address]);
 
@@ -62,11 +62,9 @@ export default function Dashboard() {
       setLoadingBeneficiaries(true);
       
       try {
-        // Fetch beneficiary addresses from the wallet's 'beneficiary_addrs' field
         const addrs = await get_beneficiary_addrs(selectedWallet);
         setBeneficiaryAddrs(addrs);
 
-        // Fetch each beneficiary's data from the table
         const data: Record<string, BeneficiaryData> = {};
         for (const addr of addrs) {
           const beneficiary = await get_beneficiary_data(selectedWallet, addr);
@@ -231,37 +229,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {activeTab === 'beneficiaries' && selectedWallet && (
-        <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-2xl font-semibold mb-4">Beneficiaries</h2>
-          {loadingBeneficiaries ? (
-            <div className="text-center py-4">Loading beneficiaries...</div>
-          ) : beneficiaryAddrs.length === 0 ? (
-            <div className="text-center py-4">No beneficiaries found</div>
-          ) : (
-            beneficiaryAddrs.map((addr) => {
-              const beneficiary = beneficiariesData[addr];
-              if (!beneficiary) return null;
-
-              return (
-                <div key={addr} className="bg-gray-50 p-4 mb-4 rounded shadow">
-                  <p className="font-mono break-all">Address: {addr}</p>
-                  <p>Allocation: {formatBalance(beneficiary.allocation)} SUI</p>
-                  <p>Last Checkin: {
-                    new Date(Number(beneficiary.last_checkin)).toLocaleString()
-                  }</p>
-                  <p>Threshold: {Math.floor(extractU64(beneficiary.threshold)/60)} minutes</p>
-                  <button
-                    onClick={() => handleExecuteTransfer(selectedWallet)}
-                    className="mt-2 bg-purple-100 hover:bg-purple-200 text-purple-800 py-1 px-3 rounded"
-                  >
-                    Execute Transfer
-                  </button>
-                </div>
-              );
-            })
-          )}
-        </div>
+      {activeTab === 'beneficiaries' && (
+        <ZombieWalletBeneficiary  />
       )}
 
       {showAddBeneficiary && (
