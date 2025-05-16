@@ -1,6 +1,48 @@
 import { gql } from '@apollo/client';
 import { ZOMBIE_WALLET_TYPE} from '@/config/constants'; 
 
+//registry and wallets
+export const GET_REGISTRY_AND_WALLETS = gql`
+  query GetRegistryAndWallets($owner: SuiAddress!) {
+    registry: objects(
+      filter: {
+        type: "${ZOMBIE_WALLET_TYPE}",
+        owner: $owner
+      }
+      first: 1
+    ) {
+      nodes {
+        asMoveObject {
+          address
+        }
+      }
+    }
+    wallets: objects(
+      filter: {
+        type: "${ZOMBIE_WALLET_TYPE}",
+        owner: $owner
+      }
+      first: 10
+    ) {
+      nodes {
+        asMoveObject {
+          address
+          contents {
+            type
+            fields {
+              balance
+              id {
+                id
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+
 // queries.ts
 export const GET_ZOMBIE_WALLETS_BY_OWNER = gql`
   query GetZombieWalletsByOwner($ownerAddress: String!) {
