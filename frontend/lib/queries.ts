@@ -1,11 +1,13 @@
 import { gql } from '@apollo/client';
-import { ZOMBIE_WALLET_TYPE } from '@/config/constants'; // Adjust the path as needed
+import { ZOMBIE_WALLET_TYPE} from '@/config/constants'; // Adjust the path as needed
 
-export const GET_ZOMBIE_WALLETS = gql`
-  query GetZombieWallets {
+// queries.ts
+export const GET_ZOMBIE_WALLETS_BY_OWNER = gql`
+  query GetZombieWalletsByOwner($ownerAddress: String!) {
     objects(
       filter: {
-        type: "${ZOMBIE_WALLET_TYPE}"
+        type: "${ZOMBIE_WALLET_TYPE}",
+        owner: $ownerAddress
       }
       first: 10
     ) {
@@ -17,6 +19,14 @@ export const GET_ZOMBIE_WALLETS = gql`
               repr
             }
             data
+          }
+          owner {
+            __typename
+            ... on AddressOwner {
+              owner {
+                address
+              }
+            }
           }
           dynamicFields(first: 5) {
             nodes {
@@ -32,19 +42,12 @@ export const GET_ZOMBIE_WALLETS = gql`
                 }
               }
             }
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
           }
         }
       }
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
     }
-  }`;
+  }
+`;
 
 // Rest of your type definitions remain the same
 export interface MoveValue {
@@ -73,16 +76,19 @@ export interface WalletContents {
   };
 }
 
+// queries.ts
 export interface ZombieWallet {
   asMoveObject: {
     address: string;
     contents: WalletContents;
+    owner: {
+      __typename: string;
+      owner?: {
+        address: string;
+      };
+    };
     dynamicFields: {
       nodes: DynamicField[];
-      pageInfo: {
-        hasNextPage: boolean;
-        endCursor: string | null;
-      };
     };
   };
 }
