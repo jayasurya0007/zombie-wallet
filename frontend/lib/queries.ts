@@ -1,5 +1,5 @@
 import { gql } from '@apollo/client';
-import { ZOMBIE_WALLET_TYPE} from '@/config/constants'; // Adjust the path as needed
+import { ZOMBIE_WALLET_TYPE} from '@/config/constants'; 
 
 // queries.ts
 export const GET_ZOMBIE_WALLETS_BY_OWNER = gql`
@@ -48,6 +48,7 @@ export const GET_ZOMBIE_WALLETS_BY_OWNER = gql`
     }
   }
 `;
+
 
 // Rest of your type definitions remain the same
 export interface MoveValue {

@@ -119,10 +119,10 @@ const WalletDetails = ({ wallet }: WalletDetailsProps) => {
           <p className="font-mono text-sm break-all">{wallet.asMoveObject.address}</p>
         </div>
         
-        <div>
+        {/* <div>
           <p className="text-sm font-medium text-gray-500">Type</p>
           <p className="font-mono text-sm break-all">{wallet.asMoveObject.contents.type.repr}</p>
-        </div>
+        </div> */}
         
         <div>
           <p className="text-sm font-medium text-gray-500">Owner</p>

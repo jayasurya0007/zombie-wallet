@@ -1,9 +1,10 @@
 'use client';
-import { useContract, BeneficiaryData } from '@/app/context/ContractContext';
-import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useContract } from '@/app/context/ContractContext';
+import { useCurrentAccount, useDisconnectWallet } from '@mysten/dapp-kit';
 import { useState, useEffect } from 'react';
 import { formatBalance } from '@/lib/utils';
 import { ZombieWalletBeneficiary } from '@/app/components/ZombieWalletBeneficiary';
+import { useRouter } from 'next/navigation'; // Add this import
 
 function extractU64(val: unknown): number {
   if (typeof val === 'number') return val;
@@ -19,6 +20,7 @@ function extractU64(val: unknown): number {
 }
 
 export default function Dashboard() {
+  const router = useRouter(); // Initialize the router
   const {
     isConnected,
     registry,
@@ -28,13 +30,11 @@ export default function Dashboard() {
     createWallet,
     addBeneficiary,
     withdraw,
-    executeTransfer,
     fetchWalletsGraphQL,
-    get_beneficiary_addrs,
-    get_beneficiary_data,
   } = useContract();
 
   const currentAccount = useCurrentAccount();
+  const { mutate: disconnect } = useDisconnectWallet();
   const [activeTab, setActiveTab] = useState<'wallets' | 'beneficiaries'>('wallets');
   const [showAddBeneficiary, setShowAddBeneficiary] = useState(false);
   const [showWithdrawForm, setShowWithdrawForm] = useState<string | null>(null);
@@ -46,42 +46,18 @@ export default function Dashboard() {
     timeUnit: 0,
   });
   const [withdrawAmount, setWithdrawAmount] = useState('');
-  const [beneficiaryAddrs, setBeneficiaryAddrs] = useState<string[]>([]);
-  const [beneficiariesData, setBeneficiariesData] = useState<Record<string, BeneficiaryData>>({});
-  const [loadingBeneficiaries, setLoadingBeneficiaries] = useState(false);
+
+  useEffect(() => {
+    if (!currentAccount?.address) {
+      router.push('/');
+    }
+  }, [currentAccount?.address, router]);
 
   useEffect(() => {
     if (isConnected && currentAccount?.address) {
       fetchWalletsGraphQL();
     }
   }, [isConnected, currentAccount?.address]);
-
-  useEffect(() => {
-    const loadBeneficiaries = async () => {
-      if (!selectedWallet) return;
-      setLoadingBeneficiaries(true);
-      
-      try {
-        const addrs = await get_beneficiary_addrs(selectedWallet);
-        setBeneficiaryAddrs(addrs);
-
-        const data: Record<string, BeneficiaryData> = {};
-        for (const addr of addrs) {
-          const beneficiary = await get_beneficiary_data(selectedWallet, addr);
-          if (beneficiary) {
-            data[addr] = beneficiary;
-          }
-        }
-        setBeneficiariesData(data);
-      } catch (error) {
-        console.error('Failed to load beneficiaries:', error);
-      } finally {
-        setLoadingBeneficiaries(false);
-      }
-    };
-
-    loadBeneficiaries();
-  }, [selectedWallet, get_beneficiary_addrs, get_beneficiary_data]);
 
   const handleCreateRegistry = async () => await createRegistry();
   const handleCreateWallet = async () => registry?.objectId && await createWallet(registry.objectId);
@@ -113,17 +89,34 @@ export default function Dashboard() {
     setWithdrawAmount('');
   };
 
-  const handleExecuteTransfer = async (walletId: string) => {
-    await executeTransfer(walletId);
-    await fetchWalletsGraphQL();
-    setBeneficiaryAddrs([]);
-    setBeneficiariesData({});
+  const handleDisconnect = () => {
+    disconnect(undefined, {
+      onSuccess: () => {
+        // Clear any local storage or session data if needed
+        localStorage.removeItem('wallet-connected');
+        sessionStorage.removeItem('wallet-connected');
+        
+        // Force a hard redirect to ensure complete reset
+        window.location.href = '/';
+      },
+      onError: (error) => {
+        console.error('Disconnect error:', error);
+      }
+    });
   };
 
   if (!registry) {
     return (
       <div className="max-w-md mx-auto mt-12 p-6 bg-white rounded-lg shadow-md">
-        <h2 className="text-2xl font-bold mb-4">Welcome to ZombieWallet</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-bold">Welcome to ZombieWallet</h2>
+          <button
+            onClick={handleDisconnect}
+            className="bg-red-500 hover:bg-red-600 text-white py-1 px-3 rounded text-sm"
+          >
+            Disconnect
+          </button>
+        </div>
         <button
           onClick={handleCreateRegistry}
           disabled={isLoading}
@@ -138,7 +131,15 @@ export default function Dashboard() {
   if (wallets.length === 0) {
     return (
       <div className="max-w-md mx-auto mt-12 p-6 bg-white rounded-lg shadow-md">
-        <h2 className="text-2xl font-bold mb-4">Create Your First Wallet</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-bold">Create Your First Wallet</h2>
+          <button
+            onClick={handleDisconnect}
+            className="bg-red-500 hover:bg-red-600 text-white py-1 px-3 rounded text-sm"
+          >
+            Disconnect
+          </button>
+        </div>
         <button
           onClick={handleCreateWallet}
           disabled={isLoading}
@@ -152,7 +153,15 @@ export default function Dashboard() {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-6">ZombieWallet Dashboard</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold">ZombieWallet Dashboard</h1>
+        <button
+          onClick={handleDisconnect}
+          className="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded"
+        >
+          Disconnect Wallet
+        </button>
+      </div>
       
       <div className="flex mb-6 border-b">
         <button
@@ -230,7 +239,7 @@ export default function Dashboard() {
       )}
 
       {activeTab === 'beneficiaries' && (
-        <ZombieWalletBeneficiary  />
+        <ZombieWalletBeneficiary />
       )}
 
       {showAddBeneficiary && (
