@@ -59,8 +59,14 @@ export default function Dashboard() {
     }
   }, [isConnected, currentAccount?.address]);
 
-  const handleCreateRegistry = async () => await createRegistry();
-  const handleCreateWallet = async () => registry?.objectId && await createWallet(registry.objectId);
+  const handleCreateRegistry = async () =>{
+    await createRegistry();
+    await fetchWalletsGraphQL();
+  };
+  const handleCreateWallet = async () =>{ 
+    registry?.objectId && await createWallet(registry.objectId);
+    await fetchWalletsGraphQL();
+  };
 
   const handleAddBeneficiary = async () => {
     if (!selectedWallet) return;
