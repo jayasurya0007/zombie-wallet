@@ -17,7 +17,7 @@ export default function Home() {
 
   return (
     <main style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 80 }}>
-      <h1 style={{ fontSize: 32, marginBottom: 24 }}>Sui dApp Kit + Next.js Example</h1>
+      <h1 style={{ fontSize: 32, marginBottom: 24 }}>Zombie Wallet</h1>
       <ConnectButton />
     </main>
   );
