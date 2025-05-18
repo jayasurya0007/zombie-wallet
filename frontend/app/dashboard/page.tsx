@@ -4,7 +4,7 @@ import { useCurrentAccount, useDisconnectWallet } from '@mysten/dapp-kit';
 import { useState, useEffect } from 'react';
 import { formatBalance } from '@/lib/utils';
 import { ZombieWalletBeneficiary } from '@/app/components/ZombieWalletBeneficiary';
-import { useRouter } from 'next/navigation'; // Add this import
+import { useRouter } from 'next/navigation';
 
 function extractU64(val: unknown): number {
   if (typeof val === 'number') return val;
@@ -20,17 +20,20 @@ function extractU64(val: unknown): number {
 }
 
 export default function Dashboard() {
-  const router = useRouter(); // Initialize the router
+  const router = useRouter();
   const {
     isConnected,
-    registry,
     wallets,
     isLoading,
-    createRegistry,
     createWallet,
     addBeneficiary,
     withdraw,
-    fetchWalletsGraphQL,
+    executeTransfer,
+    claimAllocation,
+    fetchWallets,
+    getCoins,
+    getBeneficiaryAddrs,
+    getBeneficiaryData,
   } = useContract();
 
   const currentAccount = useCurrentAccount();
@@ -42,10 +45,10 @@ export default function Dashboard() {
   const [beneficiaryForm, setBeneficiaryForm] = useState({
     address: '',
     allocation: '',
-    duration: '',
-    timeUnit: 0,
+    depositCoinId: '',
   });
   const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [availableCoins, setAvailableCoins] = useState<{ coinObjectId: string, balance: string }[]>([]);
 
   useEffect(() => {
     if (!currentAccount?.address) {
@@ -54,18 +57,16 @@ export default function Dashboard() {
   }, [currentAccount?.address, router]);
 
   useEffect(() => {
-    if (isConnected && currentAccount?.address) {
-      fetchWalletsGraphQL();
-    }
-  }, [isConnected, currentAccount?.address]);
+    const loadCoins = async () => {
+      const coins = await getCoins();
+      setAvailableCoins(coins);
+    };
+    loadCoins();
+  }, [getCoins]);
 
-  const handleCreateRegistry = async () =>{
-    await createRegistry();
-    await fetchWalletsGraphQL();
-  };
-  const handleCreateWallet = async () =>{ 
-    registry?.objectId && await createWallet(registry.objectId);
-    await fetchWalletsGraphQL();
+  const handleCreateWallet = async () => { 
+    await createWallet();
+    await fetchWallets();
   };
 
   const handleAddBeneficiary = async () => {
@@ -81,12 +82,11 @@ export default function Dashboard() {
       selectedWallet,
       beneficiaryForm.address,
       allocation,
-      Number(beneficiaryForm.duration),
-      beneficiaryForm.timeUnit
+      beneficiaryForm.depositCoinId
     );
     setShowAddBeneficiary(false);
-    setBeneficiaryForm({ address: '', allocation: '', duration: '', timeUnit: 0 });
-    await fetchWalletsGraphQL();
+    setBeneficiaryForm({ address: '', allocation: '', depositCoinId: '' });
+    await fetchWallets();
   };
 
   const handleWithdraw = async (walletId: string) => {
@@ -98,11 +98,8 @@ export default function Dashboard() {
   const handleDisconnect = () => {
     disconnect(undefined, {
       onSuccess: () => {
-        // Clear any local storage or session data if needed
         localStorage.removeItem('wallet-connected');
         sessionStorage.removeItem('wallet-connected');
-        
-        // Force a hard redirect to ensure complete reset
         window.location.href = '/';
       },
       onError: (error) => {
@@ -110,29 +107,6 @@ export default function Dashboard() {
       }
     });
   };
-
-  if (!registry) {
-    return (
-      <div className="max-w-md mx-auto mt-12 p-6 bg-white rounded-lg shadow-md">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-bold">Welcome to ZombieWallet</h2>
-          <button
-            onClick={handleDisconnect}
-            className="bg-red-500 hover:bg-red-600 text-white py-1 px-3 rounded text-sm"
-          >
-            Disconnect
-          </button>
-        </div>
-        <button
-          onClick={handleCreateRegistry}
-          disabled={isLoading}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded"
-        >
-          {isLoading ? 'Creating...' : 'Create Registry'}
-        </button>
-      </div>
-    );
-  }
 
   if (wallets.length === 0) {
     return (
@@ -212,6 +186,12 @@ export default function Dashboard() {
                   >
                     Withdraw Funds
                   </button>
+                  <button
+                    onClick={() => executeTransfer(wallet.id)}
+                    className="w-full bg-purple-100 hover:bg-purple-200 text-purple-800 py-2 px-4 rounded"
+                  >
+                    Execute Transfer
+                  </button>
                   {showWithdrawForm === wallet.id && (
                     <div className="mt-4 bg-gray-100 p-3 rounded">
                       <input
@@ -268,23 +248,23 @@ export default function Dashboard() {
               min="0"
               step="0.01"
             />
-            <div className="flex space-x-2 mb-3">
-              <input
-                type="number"
-                value={beneficiaryForm.duration}
-                onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, duration: e.target.value })}
-                placeholder="Duration"
-                className="flex-1 p-2 border rounded"
-              />
-              <select
-                value={beneficiaryForm.timeUnit}
-                onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, timeUnit: Number(e.target.value) })}
-                className="flex-1 p-2 border rounded"
-              >
-                <option value={0}>Minutes</option>
-                <option value={1}>Days</option>
-              </select>
-            </div>
+            <select
+              value={beneficiaryForm.depositCoinId}
+              onChange={(e) => setBeneficiaryForm({ 
+                ...beneficiaryForm, 
+                depositCoinId: e.target.value 
+              })}
+              className="w-full p-2 border rounded mb-3"
+            >
+              <option value="">Select Coin to Deposit</option>
+              {availableCoins
+                .filter(coin => Number(coin.balance) > 0.1 * 1e9) // Show only coins with > 0.1 SUI
+                .map((coin) => (
+                  <option key={coin.coinObjectId} value={coin.coinObjectId}>
+                    {formatBalance(coin.balance)} SUI ({coin.coinObjectId.slice(0, 6)}...)
+                  </option>
+                ))}
+            </select>
             <div className="flex space-x-2">
               <button
                 onClick={handleAddBeneficiary}
