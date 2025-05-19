@@ -201,42 +201,39 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
 
  
   const withdraw = async (walletId: string, beneficiary: string): Promise<void> => {
-      if (!currentAccount?.address) throw new Error("No connected account");
+  if (!currentAccount?.address) throw new Error("No connected account");
 
-      const tx = new Transaction();
-      tx.setGasBudget(20000000); // 0.02 SUI
+  const tx = new Transaction();
+  tx.setGasBudget(20000000); // 0.02 SUI
 
-      tx.moveCall({
-        target: `${ZOMBIE_MODULE}::zombie::withdraw`,
-        arguments: [
-          tx.object(walletId),
-          tx.pure.address(beneficiary),
-        ],
-      });
+  tx.moveCall({
+    target: `${ZOMBIE_MODULE}::zombie::withdraw`,
+    arguments: [
+      tx.object(walletId),
+      tx.pure.address(beneficiary),
+    ],
+  });
 
-      try {
-        // 1. Execute transaction without options
-        const { digest } = await signAndExecuteTransactionBlock({
-          transaction: tx
-        });
+  try {
+    // 1. Execute transaction and get digest
+    const { digest } = await signAndExecuteTransactionBlock({
+      transaction: tx
+    });
 
-        // 2. Fetch detailed effects separately
-        const result = await provider.getTransactionBlock({
-          digest,
-          options: { showEffects: true, showEvents: true }
-        });
+    // 2. Wait for transaction finalization
+    await provider.waitForTransaction({
+      digest,
+      timeout: 30 * 1000, // 30 seconds
+      pollInterval: 2 * 1000 // Check every 2 seconds
+    });
 
-        // 3. Type-safe status check
-        if (result.effects?.status.status === 'failure') {
-          throw new Error(result.effects.status.error || 'Withdrawal failed');
-        }
-
-        await fetchWallets();
-      } catch (error) {
-        console.error("Withdrawal failed:", error);
-        throw new Error(`Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      }
-    };
+    // 3. Refresh wallet data
+    await fetchWallets();
+  } catch (error) {
+    console.error("Withdrawal failed:", error);
+    throw new Error(`Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
 
 
   const executeTransfer = async (walletId: string) => {
