@@ -167,29 +167,26 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
 ) => {
   if (!currentAccount?.address) throw new Error("No connected account");
 
-  // Convert SUI to MIST (1 SUI = 1e9 MIST)
-  const allocationMist = Math.round(allocation * 1e9);
+    // Convert SUI to MIST (1 SUI = 1e9 MIST)
+    const allocationMist = Math.round(allocation * 1e9);
+    
+    const tx = new Transaction();
 
-  const tx = new Transaction();
+    // Correct method name and syntax for splitting coins
+    const [depositCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(allocationMist)]);
 
-  // Split the deposit coin into the allocation amount
-  const [allocationCoin] = tx.splitCoins(
-    tx.object(depositCoinId),
-    [tx.pure.u64(allocationMist)]
-  );
-
-  tx.setGasBudget(5_000_000); 
-
+    // Set explicit gas budget (0.2 SUI)
+    tx.setGasBudget(20000000); // 200 million MIST = 0.2 SUI
 
   tx.moveCall({
-    target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
-    arguments: [
-      tx.object(walletId),
-      tx.pure.address(beneficiary),
-      tx.pure.u64(allocationMist), // allocation in MIST
-      allocationCoin,              // the split coin reference
-    ],
-  });
+      target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
+      arguments: [
+        tx.object(walletId),
+        tx.pure.address(beneficiary),
+        tx.pure.u64(allocationMist),
+        depositCoin,
+      ],
+    });
 
   try {
     await signAndExecuteTransactionBlock({
