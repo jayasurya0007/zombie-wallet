@@ -82,6 +82,12 @@ export default function Dashboard() {
       .map((b: { Address: number[] }) => formatAddress(b.Address)) || [];
   };
 
+  const getWalletBalance = (wallet: WalletData) => {
+    const coinValue = wallet.asMoveObject.contents.data.Struct
+      .find((f: any) => f.name === 'coin')?.value.Struct[0]?.value.Number || '0';
+    return parseInt(coinValue) / 100000000; // Convert from MIST to SUI
+  };
+
   const handleAddBeneficiary = async () => {
     if (!selectedWallet) return;
     const allocation = Number(beneficiaryForm.allocation);
@@ -195,17 +201,23 @@ export default function Dashboard() {
       </div>
 
       {activeTab === 'wallets' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {wallets.map((wallet) => {
-            const balance = extractU64(wallet.coin?.balance);
-            return (
-              <div key={wallet.id} className="bg-white p-6 rounded-lg shadow-md">
-                <h3 className="text-xl font-semibold mb-2">
-                  {formatAddressDisplay(wallet.id)}
-                </h3>
-                <p className="mb-4">
-                  Balance: {formatBalance(balance.toString())} SUI
-                </p>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {wallets.map((wallet) => {
+        const walletData = data?.objects?.nodes?.find(
+          (w: WalletData) => w.asMoveObject.address === wallet.id
+        );
+        
+        const balance = walletData ? getWalletBalance(walletData) : 0;
+        const beneficiaries = getWalletBeneficiaries(wallet.id);
+
+        return (
+          <div key={wallet.id} className="bg-white p-6 rounded-lg shadow-md">
+            <h3 className="text-xl font-semibold mb-2">
+              {formatAddressDisplay(wallet.id)}
+            </h3>
+            <p className="mb-4">
+              Balance: {balance} SUI {/* Directly display calculated balance */}
+            </p>
                 <div className="space-y-2">
                   <button
                     onClick={() => {

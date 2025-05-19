@@ -200,34 +200,43 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
 };
 
  
-  const withdraw = async (walletId: string, beneficiary: string): Promise<void> => {
+ const withdraw = async (walletId: string, beneficiary: string): Promise<void> => {
   if (!currentAccount?.address) throw new Error("No connected account");
 
-  const tx = new Transaction();
-  tx.setGasBudget(20000000); // 0.02 SUI
-
-  tx.moveCall({
-    target: `${ZOMBIE_MODULE}::zombie::withdraw`,
-    arguments: [
-      tx.object(walletId),
-      tx.pure.address(beneficiary),
-    ],
-  });
-
   try {
-    // 1. Execute transaction and get digest
+    // 1. Get fresh wallet data first
+    const { data: walletData } = await provider.getObject({
+      id: walletId,
+      options: { showContent: false }
+    });
+
+    if (!walletData) throw new Error("Wallet not found");
+
+    // 2. Build transaction with explicit version
+    const tx = new Transaction();
+    tx.setGasBudget(20000000); // 0.02 SUI
+
+    tx.moveCall({
+      target: `${ZOMBIE_MODULE}::zombie::withdraw`,
+      arguments: [
+        tx.object(walletId),
+        tx.pure.address(beneficiary)
+      ]
+    });
+
+    // 3. Execute and wait for confirmation
     const { digest } = await signAndExecuteTransactionBlock({
       transaction: tx
     });
 
-    // 2. Wait for transaction finalization
+    // 4. Wait for finality
     await provider.waitForTransaction({
       digest,
-      timeout: 30 * 1000, // 30 seconds
-      pollInterval: 2 * 1000 // Check every 2 seconds
+      timeout: 30 * 1000,
+      pollInterval: 2 * 1000
     });
 
-    // 3. Refresh wallet data
+    // 5. Force refresh wallet data
     await fetchWallets();
   } catch (error) {
     console.error("Withdrawal failed:", error);
@@ -235,17 +244,51 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   }
 };
 
-
   const executeTransfer = async (walletId: string) => {
+  try {
+    // 1. Get fresh wallet data
+    const walletData = await provider.getObject({
+      id: walletId,
+      options: { showContent: false }
+    });
+
+    if (!walletData.data) {
+      throw new Error("Wallet not found");
+    }
+
+    // 2. Build transaction with proper object reference
     const tx = new Transaction();
-    tx.setGasBudget(20000000); // 0.02 SUI
+    tx.setGasBudget(200000000); // 0.2 SUI
+    
     tx.moveCall({
       target: `${ZOMBIE_MODULE}::zombie::execute_transfer`,
-      arguments: [tx.object(walletId)],
+      arguments: [
+        // Use proper object reference format
+        tx.object(walletId)
+      ]
     });
-    await signAndExecuteTransactionBlock({ transaction: tx });
+
+    // 3. Execute and wait for confirmation
+    const { digest } = await signAndExecuteTransactionBlock({
+      transaction: tx
+    });
+
+    // 4. Wait for transaction finality
+    await provider.waitForTransaction({
+      digest,
+      timeout: 30 * 1000,
+      pollInterval: 2 * 1000
+    });
+
+    // 5. Update local state
     await fetchWallets();
-  };
+  } catch (error) {
+    console.error("Execute Transfer Failed:", error);
+    throw new Error(
+      `Failed to execute transfer: ${error instanceof Error ? error.message : "Unknown error"}`
+    );
+  }
+};
 
   const claimAllocation = async (walletId: string) => {
     const tx = new Transaction();
