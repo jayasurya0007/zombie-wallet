@@ -10,6 +10,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { ApolloClient, InMemoryCache, gql } from '@apollo/client';
 import { fromBase64 } from '@mysten/bcs';
 import { ZOMBIE_MODULE, ZOMBIE_WALLET_TYPE } from '@/config/constants';
+import { bcs } from '@mysten/bcs';
 
 // Initialize Apollo Client
 const apolloClient = new ApolloClient({
@@ -100,44 +101,52 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   }, [currentAccount?.address]);
 
   const fetchWallets = async () => {
-  if (!currentAccount?.address) return;
-  
-  setIsLoading(true);
-  try {
-    const response = await provider.getOwnedObjects({
-      owner: currentAccount.address,
-      filter: { StructType: ZOMBIE_WALLET_TYPE },
-      options: { showContent: true },
-    });
+    if (!currentAccount?.address) return;
+    
+    setIsLoading(true);
+    try {
+      const response = await provider.getOwnedObjects({
+        owner: currentAccount.address,
+        filter: { StructType: ZOMBIE_WALLET_TYPE },
+        options: { showContent: true },
+      });
 
-    const wallets = await Promise.all(
-      response.data.map(async (obj: any) => {
-        const content = obj.data?.content;
-        if (!content || content.dataType !== 'moveObject') return null;
+      const wallets = await Promise.all(
+        response.data.map(async (obj: any) => {
+          try {
+            const content = obj.data?.content;
+            if (!content || content.dataType !== 'moveObject') return null;
 
-        // Safe field access with fallbacks
-        return {
-          id: obj.data.objectId,
-          owner: content.fields.owner || '',
-          beneficiaries: {},
-          beneficiary_addrs: (content.fields.beneficiary_addrs || []).map(
-            (addr: any) => convertByteArrayToAddress(addr)
-          ),
-          coin: { 
-            balance: content.fields.coin?.value || '0' // Updated path
+            // Add null-safe access for wallet fields
+            const fields = content.fields || {};
+            const coinFields = fields.coin?.fields || { value: '0' };
+
+            return {
+              id: obj.data.objectId,
+              owner: fields.owner || '',
+              beneficiaries: {},
+              beneficiary_addrs: (fields.beneficiary_addrs || []).map(
+                (addr: any) => convertByteArrayToAddress(addr)
+              ),
+              coin: { 
+                balance: coinFields.value || '0'
+              }
+            };
+          } catch (error) {
+            console.error('Error processing wallet:', error);
+            return null;
           }
-        };
-      })
-    );
+        })
+      );
 
-    setWallets(wallets.filter(Boolean) as ZombieWallet[]);
-  } catch (error) {
-    console.error("Failed to fetch wallets:", error);
-    setWallets([]);
-  } finally {
-    setIsLoading(false);
-  }
-};
+      setWallets(wallets.filter(Boolean) as ZombieWallet[]);
+    } catch (error) {
+      console.error("Failed to fetch wallets:", error);
+      setWallets([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const createWallet = async () => {
     if (!currentAccount?.address) throw new Error("No connected account");
@@ -158,24 +167,29 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
 ) => {
   if (!currentAccount?.address) throw new Error("No connected account");
 
+  // Convert SUI to MIST (1 SUI = 1e9 MIST)
+  const allocationMist = Math.round(allocation * 1e9);
+
   const tx = new Transaction();
-  
-  // 1. Prepare the deposit coin explicitly
-  const depositCoin = tx.object(depositCoinId);
-  
-  // 2. Set proper gas handling
+
+  // Split the deposit coin into the allocation amount
+  const [allocationCoin] = tx.splitCoins(
+    tx.object(depositCoinId),
+    [tx.pure.u64(allocationMist)]
+  );
+
+  tx.setGasBudget(5_000_000); 
+
+
   tx.moveCall({
     target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
     arguments: [
       tx.object(walletId),
       tx.pure.address(beneficiary),
-      tx.pure.u64(allocation * 1e9), // Convert to MIST
-      depositCoin,
+      tx.pure.u64(allocationMist), // allocation in MIST
+      allocationCoin,              // the split coin reference
     ],
   });
-
-  // 3. Set reasonable gas budget (0.05 SUI)
-  tx.setGasBudget(50_000_000);
 
   try {
     await signAndExecuteTransactionBlock({
@@ -184,7 +198,8 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     await fetchWallets();
   } catch (error) {
     console.error("Transaction failed:", error);
-    throw new Error(`Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    const message = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Transaction failed: ${message}`);
   }
 };
 
@@ -196,7 +211,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
       target: `${ZOMBIE_MODULE}::zombie::withdraw`,
       arguments: [
         tx.object(walletId),
-        tx.pure.u64(amountMist),
+        tx.pure(bcs.u64().serialize(amountMist)), // Fixed here
       ],
     });
     await signAndExecuteTransactionBlock({ transaction: tx });

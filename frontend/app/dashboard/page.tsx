@@ -257,13 +257,15 @@ export default function Dashboard() {
               className="w-full p-2 border rounded mb-3"
             >
               <option value="">Select Coin to Deposit</option>
-              {availableCoins
-                .filter(coin => Number(coin.balance) > 0.1 * 1e9) // Show only coins with > 0.1 SUI
-                .map((coin) => (
-                  <option key={coin.coinObjectId} value={coin.coinObjectId}>
-                    {formatBalance(coin.balance)} SUI ({coin.coinObjectId.slice(0, 6)}...)
-                  </option>
-                ))}
+                {availableCoins
+                  .filter(coin => 
+                    Number(coin.balance) > (Number(beneficiaryForm.allocation || 0) * 1e9) + 0.1 * 1e9
+                  )
+                  .map((coin) => (
+                    <option key={coin.coinObjectId} value={coin.coinObjectId}>
+                      {formatBalance(coin.balance)} SUI ({coin.coinObjectId.slice(0, 6)}...)
+                    </option>
+                  ))}
             </select>
             <div className="flex space-x-2">
               <button
