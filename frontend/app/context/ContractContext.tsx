@@ -41,7 +41,7 @@ interface ContractContextType {
     allocation: number,
     depositCoinId: string
   ) => Promise<void>;
-  withdraw: (walletId: string, amount: number) => Promise<void>;
+  withdraw: (walletId: string, beneficiary: string) => Promise<void>;
   executeTransfer: (walletId: string) => Promise<void>;
   claimAllocation: (walletId: string) => Promise<void>;
   fetchWallets: () => Promise<void>;
@@ -200,20 +200,21 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   }
 };
 
-  const withdraw = async (walletId: string, amount: number) => {
-    const tx = new Transaction();
-    const amountMist = Math.round(amount * 1e9);
-    
-    tx.moveCall({
-      target: `${ZOMBIE_MODULE}::zombie::withdraw`,
-      arguments: [
-        tx.object(walletId),
-        tx.pure(bcs.u64().serialize(amountMist)), // Fixed here
-      ],
-    });
-    await signAndExecuteTransactionBlock({ transaction: tx });
-    await fetchWallets();
-  };
+  const withdraw = async (walletId: string, beneficiary: string) => {
+  const tx = new Transaction();
+
+  tx.moveCall({
+    target: `${ZOMBIE_MODULE}::zombie::withdraw`,
+    arguments: [
+      tx.object(walletId),
+      tx.pure.address(beneficiary),
+    ],
+  });
+
+  await signAndExecuteTransactionBlock({ transaction: tx });
+  await fetchWallets();
+};
+
 
   const executeTransfer = async (walletId: string) => {
     const tx = new Transaction();

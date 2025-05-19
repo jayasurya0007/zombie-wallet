@@ -49,6 +49,8 @@ export default function Dashboard() {
   });
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [availableCoins, setAvailableCoins] = useState<{ coinObjectId: string, balance: string }[]>([]);
+  const [selectedBeneficiary, setSelectedBeneficiary] = useState<string | null>(null);
+  const [walletBeneficiaries, setWalletBeneficiaries] = useState<string[]>([]);
 
   useEffect(() => {
     if (!currentAccount?.address) {
@@ -90,10 +92,12 @@ export default function Dashboard() {
   };
 
   const handleWithdraw = async (walletId: string) => {
-    await withdraw(walletId, Number(withdrawAmount));
-    setShowWithdrawForm(null);
-    setWithdrawAmount('');
-  };
+  if (!selectedBeneficiary) return;
+  await withdraw(walletId, selectedBeneficiary);
+  setShowWithdrawForm(null);
+  setSelectedBeneficiary(null);
+  setWalletBeneficiaries([]);
+};
 
   const handleDisconnect = () => {
     disconnect(undefined, {

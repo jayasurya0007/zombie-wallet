@@ -64,14 +64,32 @@ module zombiewallet::zombie {
 
     public entry fun withdraw(
         wallet: &mut ZombieWallet,
-        amount: u64,
+        beneficiary: address,
         ctx: &mut TxContext
     ) {
+        // Validate ownership and beneficiary existence
         assert!(sender(ctx) == wallet.owner, EInvalidOwnership);
-        let bal = value(&wallet.coin);
-        assert!(amount <= bal, EInvalidWithdrawAmount);
+        assert!(contains(&wallet.beneficiaries, beneficiary), ENotBeneficiary);
 
-        let coin = from_balance(split(&mut wallet.coin, amount), ctx);
+        // Remove beneficiary data to get allocation amount
+        let data = remove(&mut wallet.beneficiaries, beneficiary);
+        let allocation_amount = data.allocation;
+
+        // Remove from beneficiary address list
+        let addr_vector = &mut wallet.beneficiary_addrs;
+        let len = vector::length(addr_vector);
+        let mut i = 0;
+        while (i < len) {
+            if (*vector::borrow(addr_vector, i) == beneficiary) {
+                vector::swap_remove(addr_vector, i);
+                break;
+            };
+            i = i + 1;
+        };
+
+        // Verify and transfer funds
+        assert!(allocation_amount <= value(&wallet.coin), EInvalidWithdrawAmount);
+        let coin = from_balance(split(&mut wallet.coin, allocation_amount), ctx);
         public_transfer(coin, wallet.owner);
     }
 
