@@ -45,8 +45,7 @@ interface ContractContextType {
   executeTransfer: (walletId: string) => Promise<void>;
   claimAllocation: (walletId: string) => Promise<void>;
   fetchWallets: () => Promise<void>;
-  fetchWalletsGraphQL: () => Promise<ZombieWallet[]>;
-  fetchWalletDetailsGraphQL: (walletId: string) => Promise<ZombieWallet | null>;
+  fetchWalletsGraphQL: (walletId: string) => Promise<ZombieWallet | null>;
   getCoins: () => Promise<{ coinObjectId: string, balance: string }[]>;
   getBeneficiaryAddrs: (walletId: string) => Promise<string[]>;
   getBeneficiaryData: (
@@ -200,24 +199,49 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   }
 };
 
-  const withdraw = async (walletId: string, beneficiary: string) => {
-  const tx = new Transaction();
+ 
+  const withdraw = async (walletId: string, beneficiary: string): Promise<void> => {
+      if (!currentAccount?.address) throw new Error("No connected account");
 
-  tx.moveCall({
-    target: `${ZOMBIE_MODULE}::zombie::withdraw`,
-    arguments: [
-      tx.object(walletId),
-      tx.pure.address(beneficiary),
-    ],
-  });
+      const tx = new Transaction();
+      tx.setGasBudget(20000000); // 0.02 SUI
 
-  await signAndExecuteTransactionBlock({ transaction: tx });
-  await fetchWallets();
-};
+      tx.moveCall({
+        target: `${ZOMBIE_MODULE}::zombie::withdraw`,
+        arguments: [
+          tx.object(walletId),
+          tx.pure.address(beneficiary),
+        ],
+      });
+
+      try {
+        // 1. Execute transaction without options
+        const { digest } = await signAndExecuteTransactionBlock({
+          transaction: tx
+        });
+
+        // 2. Fetch detailed effects separately
+        const result = await provider.getTransactionBlock({
+          digest,
+          options: { showEffects: true, showEvents: true }
+        });
+
+        // 3. Type-safe status check
+        if (result.effects?.status.status === 'failure') {
+          throw new Error(result.effects.status.error || 'Withdrawal failed');
+        }
+
+        await fetchWallets();
+      } catch (error) {
+        console.error("Withdrawal failed:", error);
+        throw new Error(`Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    };
 
 
   const executeTransfer = async (walletId: string) => {
     const tx = new Transaction();
+    tx.setGasBudget(20000000); // 0.02 SUI
     tx.moveCall({
       target: `${ZOMBIE_MODULE}::zombie::execute_transfer`,
       arguments: [tx.object(walletId)],
@@ -236,20 +260,66 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     await fetchWallets();
   };
 
-  const getBeneficiaryAddrs = async (walletId: string): Promise<string[]> => {
-    try {
-      const wallet = await provider.getObject({
-        id: walletId,
-        options: { showContent: true }
-      });
-      
-      return (wallet.data?.content as any)?.fields.beneficiary_addrs
-        .map((addr: any) => convertByteArrayToAddress(addr)) || [];
-    } catch (error) {
-      console.error("Failed to get beneficiary addresses:", error);
-      return [];
+  const fetchWalletsGraphQL = async (walletId: string): Promise<ZombieWallet | null> => {
+  try {
+    const GET_WALLET = gql`
+      query GetWallet($walletId: String!) {
+        object(id: $walletId) {
+          ... on MoveObject {
+            address
+            contents {
+              type {
+                repr
+              }
+              data
+            }
+          }
+        }
+      }
+    `;
+    const { data } = await apolloClient.query({
+      query: GET_WALLET,
+      variables: { walletId }
+    });
+
+    const obj = data?.object;
+    if (!obj) return null;
+
+    // Parse beneficiary addresses from contents.data.Struct
+    const structArr = obj.contents?.data?.Struct || [];
+    const beneField = structArr.find((f: any) => f.name === 'beneficiary_addrs');
+    let beneficiary_addrs: string[] = [];
+    if (beneField && Array.isArray(beneField.value?.Vector)) {
+      beneficiary_addrs = beneField.value.Vector.map((b: any) =>
+        b.Address ? convertByteArrayToAddress(b.Address) : ''
+      ).filter(Boolean);
     }
-  };
+
+    return {
+      id: obj.address,
+      owner: '', // You can parse owner if needed
+      beneficiaries: {},
+      beneficiary_addrs,
+      coin: { balance: '0' } // You can parse coin balance if needed
+    };
+  } catch (error) {
+    console.error("Failed to fetch wallet details via GraphQL:", error);
+    return null;
+  }
+};
+
+
+  const getBeneficiaryAddrs = async (walletId: string): Promise<string[]> => {
+  try {
+    const wallet = await fetchWalletsGraphQL(walletId);
+    if (!wallet || !wallet.beneficiary_addrs) return [];
+    return wallet.beneficiary_addrs;
+  } catch (error) {
+    console.error("Failed to get beneficiary addresses:", error);
+    return [];
+  }
+};
+
 
   const getBeneficiaryData = async (
   walletId: string,
@@ -313,8 +383,8 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         executeTransfer,
         claimAllocation,
         fetchWallets,
-        fetchWalletsGraphQL: async () => [], // Implement as needed
-        fetchWalletDetailsGraphQL: async () => null, // Implement as needed
+
+        fetchWalletsGraphQL,
         getCoins,
         getBeneficiaryAddrs,
         getBeneficiaryData,

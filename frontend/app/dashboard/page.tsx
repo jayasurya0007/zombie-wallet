@@ -1,22 +1,25 @@
 'use client';
 import { useContract } from '@/app/context/ContractContext';
+import { useQuery } from '@apollo/client';
 import { useCurrentAccount, useDisconnectWallet } from '@mysten/dapp-kit';
 import { useState, useEffect } from 'react';
-import { formatBalance } from '@/lib/utils';
-import { ZombieWalletBeneficiary } from '@/app/components/ZombieWalletBeneficiary';
+import { formatBalance, formatAddressDisplay, formatAddress } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
+import client from '@/lib/client';
+import { GET_ZOMBIE_WALLETS_BY_OWNER } from '@/lib/queries';
 
-function extractU64(val: unknown): number {
-  if (typeof val === 'number') return val;
-  if (typeof val === 'string') return Number(val);
-  if (val && typeof val === 'object') {
-    if ('value' in val) return Number((val as { value: string | number }).value);
-    if ('fields' in val) {
-      const fields = (val as { fields: Record<string, unknown> }).fields;
-      if ('value' in fields) return Number(fields.value);
-    }
-  }
-  return 0;
+interface WalletData {
+  asMoveObject: {
+    address: string;
+    contents: {
+      data: {
+        Struct: Array<{
+          name: string;
+          value: any;
+        }>;
+      };
+    };
+  };
 }
 
 export default function Dashboard() {
@@ -24,16 +27,13 @@ export default function Dashboard() {
   const {
     isConnected,
     wallets,
-    isLoading,
+    isLoading: contractLoading,
     createWallet,
     addBeneficiary,
     withdraw,
     executeTransfer,
-    claimAllocation,
     fetchWallets,
     getCoins,
-    getBeneficiaryAddrs,
-    getBeneficiaryData,
   } = useContract();
 
   const currentAccount = useCurrentAccount();
@@ -47,10 +47,16 @@ export default function Dashboard() {
     allocation: '',
     depositCoinId: '',
   });
-  const [withdrawAmount, setWithdrawAmount] = useState('');
   const [availableCoins, setAvailableCoins] = useState<{ coinObjectId: string, balance: string }[]>([]);
   const [selectedBeneficiary, setSelectedBeneficiary] = useState<string | null>(null);
-  const [walletBeneficiaries, setWalletBeneficiaries] = useState<string[]>([]);
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
+
+  // GraphQL data fetching
+  const { loading: graphqlLoading, error, data } = useQuery(GET_ZOMBIE_WALLETS_BY_OWNER, {
+    client,
+    variables: { ownerAddress: currentAccount?.address || '' },
+    skip: !currentAccount?.address
+  });
 
   useEffect(() => {
     if (!currentAccount?.address) {
@@ -66,51 +72,77 @@ export default function Dashboard() {
     loadCoins();
   }, [getCoins]);
 
-  const handleCreateWallet = async () => { 
-    await createWallet();
-    await fetchWallets();
+  // Get beneficiaries from GraphQL data
+  const getWalletBeneficiaries = (walletId: string): string[] => {
+    const wallet = data?.objects?.nodes?.find(
+      (w: WalletData) => w.asMoveObject.address === walletId
+    );
+    return wallet?.asMoveObject.contents.data.Struct
+      .find((f: any) => f.name === 'beneficiary_addrs')?.value.Vector
+      .map((b: { Address: number[] }) => formatAddress(b.Address)) || [];
   };
 
   const handleAddBeneficiary = async () => {
     if (!selectedWallet) return;
     const allocation = Number(beneficiaryForm.allocation);
     
-    if (isNaN(allocation) || allocation <= 0) {
-      alert('Please enter a valid allocation amount');
+    if (isNaN(allocation)){
+      alert('Invalid allocation amount');
       return;
     }
-    
-    await addBeneficiary(
-      selectedWallet,
-      beneficiaryForm.address,
-      allocation,
-      beneficiaryForm.depositCoinId
-    );
-    setShowAddBeneficiary(false);
-    setBeneficiaryForm({ address: '', allocation: '', depositCoinId: '' });
-    await fetchWallets();
+
+    try {
+      await addBeneficiary(
+        selectedWallet,
+        beneficiaryForm.address,
+        allocation,
+        beneficiaryForm.depositCoinId
+      );
+      setShowAddBeneficiary(false);
+      setBeneficiaryForm({ address: '', allocation: '', depositCoinId: '' });
+      await fetchWallets();
+    } catch (error) {
+      alert(`Failed to add beneficiary: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   const handleWithdraw = async (walletId: string) => {
-  if (!selectedBeneficiary) return;
-  await withdraw(walletId, selectedBeneficiary);
-  setShowWithdrawForm(null);
-  setSelectedBeneficiary(null);
-  setWalletBeneficiaries([]);
-};
+    if (!selectedBeneficiary) return;
+    
+    setIsWithdrawing(true);
+    try {
+      await withdraw(walletId, selectedBeneficiary);
+      setShowWithdrawForm(null);
+      setSelectedBeneficiary(null);
+      await fetchWallets();
+    } catch (error) {
+      alert(`Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsWithdrawing(false);
+    }
+  };
 
   const handleDisconnect = () => {
     disconnect(undefined, {
-      onSuccess: () => {
-        localStorage.removeItem('wallet-connected');
-        sessionStorage.removeItem('wallet-connected');
-        window.location.href = '/';
-      },
-      onError: (error) => {
-        console.error('Disconnect error:', error);
-      }
+      onSuccess: () => router.push('/')
     });
   };
+
+  if (graphqlLoading || contractLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-red-500">
+        Error loading data: {error.message}
+      </div>
+    );
+  }
 
   if (wallets.length === 0) {
     return (
@@ -125,11 +157,11 @@ export default function Dashboard() {
           </button>
         </div>
         <button
-          onClick={handleCreateWallet}
-          disabled={isLoading}
+          onClick={createWallet}
+          disabled={contractLoading}
           className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded"
         >
-          {isLoading ? 'Creating...' : 'Create Wallet'}
+          {contractLoading ? 'Creating...' : 'Create Wallet'}
         </button>
       </div>
     );
@@ -146,7 +178,7 @@ export default function Dashboard() {
           Disconnect Wallet
         </button>
       </div>
-      
+
       <div className="flex mb-6 border-b">
         <button
           className={`py-2 px-4 font-medium ${activeTab === 'wallets' ? 'border-b-2 border-blue-500' : ''}`}
@@ -169,7 +201,7 @@ export default function Dashboard() {
             return (
               <div key={wallet.id} className="bg-white p-6 rounded-lg shadow-md">
                 <h3 className="text-xl font-semibold mb-2">
-                  Wallet: {wallet.id.slice(0, 8)}...{wallet.id.slice(-4)}
+                  {formatAddressDisplay(wallet.id)}
                 </h3>
                 <p className="mb-4">
                   Balance: {formatBalance(balance.toString())} SUI
@@ -185,7 +217,9 @@ export default function Dashboard() {
                     Add Beneficiary
                   </button>
                   <button
-                    onClick={() => setShowWithdrawForm(wallet.id)}
+                    onClick={async () => {
+                      setShowWithdrawForm(wallet.id);
+                    }}
                     className="w-full bg-green-100 hover:bg-green-200 text-green-800 py-2 px-4 rounded"
                   >
                     Withdraw Funds
@@ -198,22 +232,31 @@ export default function Dashboard() {
                   </button>
                   {showWithdrawForm === wallet.id && (
                     <div className="mt-4 bg-gray-100 p-3 rounded">
-                      <input
-                        type="number"
-                        value={withdrawAmount}
-                        onChange={(e) => setWithdrawAmount(e.target.value)}
-                        placeholder="Amount in SUI"
+                      <select
+                        value={selectedBeneficiary || ''}
+                        onChange={(e) => setSelectedBeneficiary(e.target.value)}
                         className="w-full p-2 mb-2 border rounded"
-                      />
+                      >
+                        <option value="">Select Beneficiary</option>
+                        {getWalletBeneficiaries(wallet.id).map((addr) => (
+                          <option key={addr} value={addr}>
+                            {formatAddressDisplay(addr)}
+                          </option>
+                        ))}
+                      </select>
                       <div className="flex space-x-2">
                         <button
                           onClick={() => handleWithdraw(wallet.id)}
                           className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded"
+                          disabled={!selectedBeneficiary || isWithdrawing}
                         >
-                          Confirm
+                          {isWithdrawing ? 'Processing...' : 'Confirm'}
                         </button>
                         <button
-                          onClick={() => setShowWithdrawForm(null)}
+                          onClick={() => {
+                            setShowWithdrawForm(null);
+                            setSelectedBeneficiary(null);
+                          }}
                           className="flex-1 bg-gray-300 hover:bg-gray-400 py-2 rounded"
                         >
                           Cancel
@@ -229,7 +272,23 @@ export default function Dashboard() {
       )}
 
       {activeTab === 'beneficiaries' && (
-        <ZombieWalletBeneficiary />
+        <div className="bg-white p-6 rounded-lg shadow">
+          <h2 className="text-lg font-semibold mb-4">All Beneficiaries</h2>
+          {wallets.map((wallet) => (
+            <div key={wallet.id} className="mb-6">
+              <h3 className="font-medium mb-2">
+                {formatAddressDisplay(wallet.id)}'s Beneficiaries
+              </h3>
+              <ul className="space-y-2">
+                {getWalletBeneficiaries(wallet.id).map((addr) => (
+                  <li key={addr} className="font-mono text-sm break-all p-2 bg-gray-50 rounded">
+                    {formatAddressDisplay(addr)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
       )}
 
       {showAddBeneficiary && (
@@ -240,8 +299,9 @@ export default function Dashboard() {
               type="text"
               value={beneficiaryForm.address}
               onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, address: e.target.value })}
-              placeholder="Beneficiary Address"
+              placeholder="Beneficiary Address (0x...)"
               className="w-full p-2 border rounded mb-3"
+              pattern="^0x[a-fA-F0-9]{64}$"
             />
             <input
               type="number"
@@ -261,15 +321,15 @@ export default function Dashboard() {
               className="w-full p-2 border rounded mb-3"
             >
               <option value="">Select Coin to Deposit</option>
-                {availableCoins
-                  .filter(coin => 
-                    Number(coin.balance) > (Number(beneficiaryForm.allocation || 0) * 1e9) + 0.1 * 1e9
-                  )
-                  .map((coin) => (
-                    <option key={coin.coinObjectId} value={coin.coinObjectId}>
-                      {formatBalance(coin.balance)} SUI ({coin.coinObjectId.slice(0, 6)}...)
-                    </option>
-                  ))}
+             {availableCoins
+    .filter(coin => 
+      Number(coin.balance) > (Number(beneficiaryForm.allocation || 0) * 1e9 + 0.1 * 1e9)
+    ) // Added missing closing parenthesis here
+    .map((coin) => (
+      <option key={coin.coinObjectId} value={coin.coinObjectId}>
+        {formatBalance(coin.balance)} SUI ({coin.coinObjectId.slice(0, 6)}...)
+      </option>
+    ))}
             </select>
             <div className="flex space-x-2">
               <button
@@ -290,4 +350,17 @@ export default function Dashboard() {
       )}
     </div>
   );
+}
+
+function extractU64(val: unknown): number {
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') return Number(val);
+  if (val && typeof val === 'object') {
+    if ('value' in val) return Number((val as { value: string | number }).value);
+    if ('fields' in val) {
+      const fields = (val as { fields: Record<string, unknown> }).fields;
+      if ('value' in fields) return Number(fields.value);
+    }
+  }
+  return 0;
 }
