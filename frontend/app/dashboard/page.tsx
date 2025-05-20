@@ -1,3 +1,4 @@
+// app/dashboard/page.tsx
 'use client';
 import { useContract } from '@/app/context/ContractContext';
 import { useQuery } from '@apollo/client';
@@ -50,8 +51,11 @@ export default function Dashboard() {
   const [availableCoins, setAvailableCoins] = useState<{ coinObjectId: string, balance: string }[]>([]);
   const [selectedBeneficiary, setSelectedBeneficiary] = useState<string | null>(null);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [storeStatus, setStoreStatus] = useState<{ loading: boolean; error: string | null }>({
+    loading: false,
+    error: null,
+  });
 
-  // GraphQL data fetching
   const { loading: graphqlLoading, error, data } = useQuery(GET_ZOMBIE_WALLETS_BY_OWNER, {
     client,
     variables: { ownerAddress: currentAccount?.address || '' },
@@ -72,7 +76,6 @@ export default function Dashboard() {
     loadCoins();
   }, [getCoins]);
 
-  // Get beneficiaries from GraphQL data
   const getWalletBeneficiaries = (walletId: string): string[] => {
     const wallet = data?.objects?.nodes?.find(
       (w: WalletData) => w.asMoveObject.address === walletId
@@ -85,48 +88,98 @@ export default function Dashboard() {
   const getWalletBalance = (wallet: WalletData) => {
     const coinValue = wallet.asMoveObject.contents.data.Struct
       .find((f: any) => f.name === 'coin')?.value.Struct[0]?.value.Number || '0';
-    return parseInt(coinValue) / 100000000; // Convert from MIST to SUI
+    return parseInt(coinValue) / 100000000;
   };
 
   const handleAddBeneficiary = async () => {
-    if (!selectedWallet) return;
-    const allocation = Number(beneficiaryForm.allocation);
-    
-    if (isNaN(allocation)){
-      alert('Invalid allocation amount');
-      return;
-    }
+      if (!selectedWallet || !currentAccount?.address) return;
+      const allocation = Number(beneficiaryForm.allocation);
+      
+      if (isNaN(allocation)){
+        alert('Invalid allocation amount');
+        return;
+      }
 
-    try {
-      await addBeneficiary(
-        selectedWallet,
-        beneficiaryForm.address,
-        allocation,
-        beneficiaryForm.depositCoinId
-      );
-      setShowAddBeneficiary(false);
-      setBeneficiaryForm({ address: '', allocation: '', depositCoinId: '' });
-      await fetchWallets();
-    } catch (error) {
-      alert(`Failed to add beneficiary: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  };
+      setStoreStatus({ loading: true, error: null });
+
+      try {
+        // Execute blockchain transaction
+        await addBeneficiary(
+          selectedWallet,
+          beneficiaryForm.address,
+          allocation,
+          beneficiaryForm.depositCoinId
+        );
+
+        // Store in MongoDB
+        const storeResponse = await fetch('/api/beneficiaries', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ownerAddress: currentAccount.address,
+            beneAddress: beneficiaryForm.address,
+            allocation: allocation,
+            walletAddress: selectedWallet,
+          }),
+        });
+
+        const result = await storeResponse.json();
+        
+        if (!storeResponse.ok) {
+          throw new Error(result.error || 'Failed to store beneficiary record');
+        }
+
+        setShowAddBeneficiary(false);
+        setBeneficiaryForm({ address: '', allocation: '', depositCoinId: '' });
+        await fetchWallets();
+      } catch (error) {
+        console.error('Storage error:', error);
+        setStoreStatus({
+          loading: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      } finally {
+        setStoreStatus(prev => ({ ...prev, loading: false }));
+      }
+    };
 
   const handleWithdraw = async (walletId: string) => {
-    if (!selectedBeneficiary) return;
-    
-    setIsWithdrawing(true);
-    try {
-      await withdraw(walletId, selectedBeneficiary);
-      setShowWithdrawForm(null);
-      setSelectedBeneficiary(null);
-      await fetchWallets();
-    } catch (error) {
-      alert(`Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsWithdrawing(false);
-    }
-  };
+      if (!selectedBeneficiary || !currentAccount?.address) return;
+      
+      setIsWithdrawing(true);
+      try {
+        // Execute blockchain withdrawal
+        await withdraw(walletId, selectedBeneficiary);
+
+        // Remove from MongoDB after successful withdrawal
+        const deleteResponse = await fetch('/api/beneficiaries', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ownerAddress: currentAccount.address,
+            beneAddress: selectedBeneficiary
+          }),
+        });
+
+        const result = await deleteResponse.json();
+        
+        if (!deleteResponse.ok) {
+          throw new Error(result.error || 'Failed to remove beneficiary record');
+        }
+
+        setShowWithdrawForm(null);
+        setSelectedBeneficiary(null);
+        await fetchWallets();
+      } catch (error) {
+        alert(`Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      } finally {
+        setIsWithdrawing(false);
+      }
+    };
 
   const handleDisconnect = () => {
     disconnect(undefined, {
@@ -201,23 +254,23 @@ export default function Dashboard() {
       </div>
 
       {activeTab === 'wallets' && (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {wallets.map((wallet) => {
-        const walletData = data?.objects?.nodes?.find(
-          (w: WalletData) => w.asMoveObject.address === wallet.id
-        );
-        
-        const balance = walletData ? getWalletBalance(walletData) : 0;
-        const beneficiaries = getWalletBeneficiaries(wallet.id);
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {wallets.map((wallet) => {
+            const walletData = data?.objects?.nodes?.find(
+              (w: WalletData) => w.asMoveObject.address === wallet.id
+            );
+            
+            const balance = walletData ? getWalletBalance(walletData) : 0;
+            const beneficiaries = getWalletBeneficiaries(wallet.id);
 
-        return (
-          <div key={wallet.id} className="bg-white p-6 rounded-lg shadow-md">
-            <h3 className="text-xl font-semibold mb-2">
-              {formatAddressDisplay(wallet.id)}
-            </h3>
-            <p className="mb-4">
-              Balance: {balance} SUI {/* Directly display calculated balance */}
-            </p>
+            return (
+              <div key={wallet.id} className="bg-white p-6 rounded-lg shadow-md">
+                <h3 className="text-xl font-semibold mb-2">
+                  {formatAddressDisplay(wallet.id)}
+                </h3>
+                <p className="mb-4">
+                  Balance: {balance.toFixed(2)} SUI
+                </p>
                 <div className="space-y-2">
                   <button
                     onClick={() => {
@@ -250,7 +303,7 @@ export default function Dashboard() {
                         className="w-full p-2 mb-2 border rounded"
                       >
                         <option value="">Select Beneficiary</option>
-                        {getWalletBeneficiaries(wallet.id).map((addr) => (
+                        {beneficiaries.map((addr) => (
                           <option key={addr} value={addr}>
                             {formatAddressDisplay(addr)}
                           </option>
@@ -274,6 +327,11 @@ export default function Dashboard() {
                           Cancel
                         </button>
                       </div>
+                      {isWithdrawing && (
+                        <p className="mt-2 text-sm text-gray-600">
+                          Removing beneficiary record from database...
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -307,6 +365,9 @@ export default function Dashboard() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center">
           <div className="bg-white p-6 rounded-lg max-w-md w-full">
             <h3 className="text-xl font-semibold mb-4">Add Beneficiary</h3>
+            {storeStatus.error && (
+              <div className="mb-4 text-red-500 text-sm">{storeStatus.error}</div>
+            )}
             <input
               type="text"
               value={beneficiaryForm.address}
@@ -333,22 +394,23 @@ export default function Dashboard() {
               className="w-full p-2 border rounded mb-3"
             >
               <option value="">Select Coin to Deposit</option>
-             {availableCoins
-    .filter(coin => 
-      Number(coin.balance) > (Number(beneficiaryForm.allocation || 0) * 1e9 + 0.1 * 1e9)
-    ) // Added missing closing parenthesis here
-    .map((coin) => (
-      <option key={coin.coinObjectId} value={coin.coinObjectId}>
-        {formatBalance(coin.balance)} SUI ({coin.coinObjectId.slice(0, 6)}...)
-      </option>
-    ))}
+              {availableCoins
+                .filter(coin => 
+                  Number(coin.balance) > (Number(beneficiaryForm.allocation || 0) * 1e9 + 0.1 * 1e9)
+                )
+                .map((coin) => (
+                  <option key={coin.coinObjectId} value={coin.coinObjectId}>
+                    {formatBalance(coin.balance)} SUI ({coin.coinObjectId.slice(0, 6)}...)
+                  </option>
+                ))}
             </select>
             <div className="flex space-x-2">
               <button
                 onClick={handleAddBeneficiary}
-                className="flex-1 bg-blue-600 text-white py-2 rounded"
+                disabled={storeStatus.loading}
+                className="flex-1 bg-blue-600 text-white py-2 rounded disabled:opacity-50"
               >
-                Add
+                {storeStatus.loading ? 'Saving...' : 'Add'}
               </button>
               <button
                 onClick={() => setShowAddBeneficiary(false)}
@@ -362,17 +424,4 @@ export default function Dashboard() {
       )}
     </div>
   );
-}
-
-function extractU64(val: unknown): number {
-  if (typeof val === 'number') return val;
-  if (typeof val === 'string') return Number(val);
-  if (val && typeof val === 'object') {
-    if ('value' in val) return Number((val as { value: string | number }).value);
-    if ('fields' in val) {
-      const fields = (val as { fields: Record<string, unknown> }).fields;
-      if ('value' in fields) return Number(fields.value);
-    }
-  }
-  return 0;
 }

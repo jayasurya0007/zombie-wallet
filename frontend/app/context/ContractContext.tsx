@@ -161,7 +161,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   const addBeneficiary = async (
   walletId: string,
   beneficiary: string,
-  allocation: number,
+  allocation: number, 
   depositCoinId: string
 ) => {
   if (!currentAccount?.address) throw new Error("No connected account");
@@ -172,10 +172,13 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     const tx = new Transaction();
 
     // Correct method name and syntax for splitting coins
-    const [depositCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(allocationMist)]);
+    const [splitCoin] = tx.splitCoins(
+    tx.object(depositCoinId),
+    [tx.pure.u64(allocationMist)]
+  );
 
     // Set explicit gas budget (0.2 SUI)
-    tx.setGasBudget(20000000); // 200 million MIST = 0.2 SUI
+    tx.setGasBudget(10000000); // 200 million MIST = 0.2 SUI
 
   tx.moveCall({
       target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
@@ -183,7 +186,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         tx.object(walletId),
         tx.pure.address(beneficiary),
         tx.pure.u64(allocationMist),
-        depositCoin,
+        splitCoin,
       ],
     });
 
