@@ -1,11 +1,10 @@
-//app/claimlist/route.ts
+// app/api/claimlist/route.ts
 import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 
 const uri = process.env.MONGODB_URI!;
 const client = new MongoClient(uri);
 
-// GET endpoint - Get beneficiaries by beneAddress
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -22,17 +21,26 @@ export async function GET(request: Request) {
     const db = client.db(process.env.MONGODB_DB);
     const collection = db.collection('beneficiaries');
 
-    const beneficiaries = await collection.find({ beneAddress }).toArray();
+    const beneficiaries = await collection.find({ 
+      beneAddress,
+      inactivityDuration: { $exists: true },
+      inactivityUnit: { $exists: true }
+    }).project({
+      ownerAddress: 1,
+      walletAddress: 1,
+      allocation: 1,
+      inactivityDuration: 1,
+      inactivityUnit: 1,
+      timestamp_checkin: 1,
+      timestamp_created: 1
+    }).toArray();
 
     return NextResponse.json(beneficiaries, { status: 200 });
 
   } catch (error: any) {
     console.error('Database error:', error);
     return NextResponse.json(
-      { 
-        success: false, 
-        error: error.message || 'Internal server error'
-      },
+      { success: false, error: error.message || 'Internal server error' },
       { status: 500 }
     );
   } finally {
