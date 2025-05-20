@@ -49,6 +49,8 @@ export default function Dashboard() {
     address: '',
     allocation: '',
     depositCoinId: '',
+    inactivityDuration: '30',
+    inactivityUnit: 'days',
   });
   const [availableCoins, setAvailableCoins] = useState<{ coinObjectId: string, balance: string }[]>([]);
   const [selectedBeneficiary, setSelectedBeneficiary] = useState<string | null>(null);
@@ -97,9 +99,10 @@ export default function Dashboard() {
   const handleAddBeneficiary = async () => {
     if (!selectedWallet || !currentAccount?.address) return;
     const allocation = Number(beneficiaryForm.allocation);
+    const inactivityDuration = Number(beneficiaryForm.inactivityDuration);
     
-    if (isNaN(allocation)){
-      alert('Invalid allocation amount');
+    if (isNaN(allocation) || isNaN(inactivityDuration) || inactivityDuration <= 0) {
+      alert('Invalid allocation amount or inactivity duration');
       return;
     }
 
@@ -121,6 +124,8 @@ export default function Dashboard() {
           beneAddress: beneficiaryForm.address,
           allocation: allocation,
           walletAddress: selectedWallet,
+          inactivityDuration: inactivityDuration,
+          inactivityUnit: beneficiaryForm.inactivityUnit,
         }),
       });
 
@@ -128,7 +133,13 @@ export default function Dashboard() {
       if (!storeResponse.ok) throw new Error(result.error || 'Failed to store beneficiary record');
 
       setShowAddBeneficiary(false);
-      setBeneficiaryForm({ address: '', allocation: '', depositCoinId: '' });
+      setBeneficiaryForm({ 
+        address: '', 
+        allocation: '', 
+        depositCoinId: '',
+        inactivityDuration: '30',
+        inactivityUnit: 'days'
+      });
       await fetchWallets();
     } catch (error) {
       console.error('Storage error:', error);
@@ -422,6 +433,31 @@ export default function Dashboard() {
               min="0"
               step="0.01"
             />
+            <div className="flex gap-2 mb-3">
+              <input
+                type="number"
+                value={beneficiaryForm.inactivityDuration}
+                onChange={(e) => setBeneficiaryForm({ 
+                  ...beneficiaryForm, 
+                  inactivityDuration: e.target.value 
+                })}
+                placeholder="Inactivity duration"
+                className="w-2/3 p-2 border rounded"
+                min="1"
+              />
+              <select
+                value={beneficiaryForm.inactivityUnit}
+                onChange={(e) => setBeneficiaryForm({ 
+                  ...beneficiaryForm, 
+                  inactivityUnit: e.target.value 
+                })}
+                className="w-1/3 p-2 border rounded"
+              >
+                <option value="minutes">Minutes</option>
+                <option value="hours">Hours</option>
+                <option value="days">Days</option>
+              </select>
+            </div>
             <select
               value={beneficiaryForm.depositCoinId}
               onChange={(e) => setBeneficiaryForm({ 

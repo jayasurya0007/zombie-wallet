@@ -8,8 +8,11 @@ interface Beneficiary {
   ownerAddress: string;
   beneAddress: string;
   allocation: number;
+  inactivityDuration: number;
+  inactivityUnit: string;
   timestamp_checkin: string;
   timestamp_created: string;
+  walletAddress: string;
 }
 
 export default function BeneficiaryList({ ownerAddress }: { ownerAddress: string }) {
@@ -35,18 +38,11 @@ export default function BeneficiaryList({ ownerAddress }: { ownerAddress: string
     try {
       const response = await fetch('/api/beneficiaries', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ownerAddress,
-          beneAddress
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerAddress, beneAddress }),
       });
 
       if (!response.ok) throw new Error('Check-in failed');
-      
-      // Refresh the list after successful check-in
       await fetchBeneficiaries();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Check-in failed');
@@ -73,6 +69,12 @@ export default function BeneficiaryList({ ownerAddress }: { ownerAddress: string
                 </p>
                 <p className="text-sm text-gray-600">
                   Allocation: {beneficiary.allocation} SUI
+                </p>
+                <p className="text-sm text-gray-600">
+                  Inactivity Period: {beneficiary.inactivityDuration} {beneficiary.inactivityUnit}
+                </p>
+                <p className="text-sm text-gray-600">
+                  Wallet: {formatAddressDisplay(beneficiary.walletAddress)}
                 </p>
               </div>
               <button

@@ -1,3 +1,4 @@
+//app/api/beneficiaries/route.ts
 import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 
@@ -7,7 +8,31 @@ const client = new MongoClient(uri);
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { ownerAddress, beneAddress, allocation, walletAddress } = body;
+    const { 
+      ownerAddress, 
+      beneAddress, 
+      allocation, 
+      walletAddress,
+      inactivityDuration,
+      inactivityUnit
+    } = body;
+
+    // Validate required fields
+    if (!ownerAddress || !beneAddress || !allocation || !walletAddress) {
+      return NextResponse.json(
+        { success: false, error: 'Missing required fields' },
+        { status: 400 }
+      );
+    }
+
+    // Validate inactivity period
+    if (typeof inactivityDuration !== 'number' || inactivityDuration <= 0 ||
+        !['minutes', 'hours', 'days'].includes(inactivityUnit)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid inactivity period' },
+        { status: 400 }
+      );
+    }
 
     await client.connect();
     const db = client.db(process.env.MONGODB_DB);
@@ -18,6 +43,8 @@ export async function POST(request: Request) {
       beneAddress,
       allocation,
       walletAddress,
+      inactivityDuration,
+      inactivityUnit,
       timestamp_checkin: new Date(),
       timestamp_created: new Date(),
     });
@@ -41,13 +68,13 @@ export async function POST(request: Request) {
     await client.close();
   }
 }
-// app/api/beneficiaries/route.ts
+
 export async function DELETE(request: Request) {
   try {
     const body = await request.json();
-    const { ownerAddress, beneAddress } = body;
+    const { ownerAddress, beneAddress, walletAddress } = body;
 
-    if (!ownerAddress || !beneAddress) {
+    if (!ownerAddress || (!beneAddress && !walletAddress)) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields' },
         { status: 400 }
@@ -58,10 +85,11 @@ export async function DELETE(request: Request) {
     const db = client.db(process.env.MONGODB_DB);
     const collection = db.collection('beneficiaries');
 
-    const result = await collection.deleteMany({
-      ownerAddress,
-      beneAddress
-    });
+    const query: any = { ownerAddress };
+    if (beneAddress) query.beneAddress = beneAddress;
+    if (walletAddress) query.walletAddress = walletAddress;
+
+    const result = await collection.deleteMany(query);
 
     return NextResponse.json({
       success: true,
