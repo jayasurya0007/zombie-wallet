@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation';
 import client from '@/lib/client';
 import { GET_ZOMBIE_WALLETS_BY_OWNER } from '@/lib/queries';
 import BeneficiaryList from '@/app/components/BeneficiaryList';
+import ClaimList from '@/app/components/ClaimList';
 
 interface WalletData {
   asMoveObject: {
@@ -40,7 +41,7 @@ export default function Dashboard() {
 
   const currentAccount = useCurrentAccount();
   const { mutate: disconnect } = useDisconnectWallet();
-  const [activeTab, setActiveTab] = useState<'wallets' | 'onchain' | 'checkins'>('wallets');
+  const [activeTab, setActiveTab] = useState<'wallets' | 'onchain' | 'checkins' | 'claims'>('wallets');
   const [showAddBeneficiary, setShowAddBeneficiary] = useState(false);
   const [showWithdrawForm, setShowWithdrawForm] = useState<string | null>(null);
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
@@ -272,6 +273,12 @@ export default function Dashboard() {
         >
           Beneficiary Check-ins
         </button>
+        <button
+          className={`py-2 px-4 font-medium ${activeTab === 'claims' ? 'border-b-2 border-blue-500' : ''}`}
+          onClick={() => setActiveTab('claims')}
+        >
+          Fund Claims
+        </button>
       </div>
 
       {activeTab === 'wallets' && (
@@ -361,6 +368,12 @@ export default function Dashboard() {
         </div>
       )}
 
+      {activeTab === 'claims' && currentAccount?.address && (
+        <div className="bg-white p-6 rounded-lg shadow">
+          <h2 className="text-lg font-semibold mb-4">Claimable Funds</h2>
+          <ClaimList ownerAddress={currentAccount.address} />
+        </div>
+      )}
       {activeTab === 'onchain' && (
         <div className="bg-white p-6 rounded-lg shadow">
           <h2 className="text-lg font-semibold mb-4">All Beneficiaries</h2>
