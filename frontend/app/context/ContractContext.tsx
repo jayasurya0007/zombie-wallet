@@ -45,9 +45,7 @@ interface ContractContextType {
   executeTransfer: (walletId: string) => Promise<void>;
   claimAllocation: (walletId: string) => Promise<void>;
   fetchWallets: () => Promise<void>;
-  fetchWalletsGraphQL: (walletId: string) => Promise<ZombieWallet | null>;
   getCoins: () => Promise<{ coinObjectId: string, balance: string }[]>;
-  getBeneficiaryAddrs: (walletId: string) => Promise<string[]>;
   getBeneficiaryData: (
     walletId: string, 
     beneficiary: string
@@ -301,67 +299,6 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     await fetchWallets();
   };
 
-  const fetchWalletsGraphQL = async (walletId: string): Promise<ZombieWallet | null> => {
-  try {
-    const GET_WALLET = gql`
-      query GetWallet($walletId: String!) {
-        object(id: $walletId) {
-          ... on MoveObject {
-            address
-            contents {
-              type {
-                repr
-              }
-              data
-            }
-          }
-        }
-      }
-    `;
-    const { data } = await apolloClient.query({
-      query: GET_WALLET,
-      variables: { walletId }
-    });
-
-    const obj = data?.object;
-    if (!obj) return null;
-
-    // Parse beneficiary addresses from contents.data.Struct
-    const structArr = obj.contents?.data?.Struct || [];
-    const beneField = structArr.find((f: any) => f.name === 'beneficiary_addrs');
-    let beneficiary_addrs: string[] = [];
-    if (beneField && Array.isArray(beneField.value?.Vector)) {
-      beneficiary_addrs = beneField.value.Vector.map((b: any) =>
-        b.Address ? convertByteArrayToAddress(b.Address) : ''
-      ).filter(Boolean);
-    }
-
-    return {
-      id: obj.address,
-      owner: '', // You can parse owner if needed
-      beneficiaries: {},
-      beneficiary_addrs,
-      coin: { balance: '0' } // You can parse coin balance if needed
-    };
-  } catch (error) {
-    console.error("Failed to fetch wallet details via GraphQL:", error);
-    return null;
-  }
-};
-
-
-  const getBeneficiaryAddrs = async (walletId: string): Promise<string[]> => {
-  try {
-    const wallet = await fetchWalletsGraphQL(walletId);
-    if (!wallet || !wallet.beneficiary_addrs) return [];
-    return wallet.beneficiary_addrs;
-  } catch (error) {
-    console.error("Failed to get beneficiary addresses:", error);
-    return [];
-  }
-};
-
-
   const getBeneficiaryData = async (
   walletId: string,
   beneficiaryAddr: string
@@ -424,10 +361,7 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         executeTransfer,
         claimAllocation,
         fetchWallets,
-
-        fetchWalletsGraphQL,
         getCoins,
-        getBeneficiaryAddrs,
         getBeneficiaryData,
       }}
     >
