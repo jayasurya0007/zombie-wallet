@@ -8,6 +8,7 @@ import { formatBalance, formatAddressDisplay, formatAddress } from '@/lib/utils'
 import { useRouter } from 'next/navigation';
 import client from '@/lib/client';
 import { GET_ZOMBIE_WALLETS_BY_OWNER } from '@/lib/queries';
+import BeneficiaryList from '@/app/components/BeneficiaryList';
 
 interface WalletData {
   asMoveObject: {
@@ -39,7 +40,7 @@ export default function Dashboard() {
 
   const currentAccount = useCurrentAccount();
   const { mutate: disconnect } = useDisconnectWallet();
-  const [activeTab, setActiveTab] = useState<'wallets' | 'beneficiaries'>('wallets');
+  const [activeTab, setActiveTab] = useState<'wallets' | 'onchain' | 'checkins'>('wallets');
   const [showAddBeneficiary, setShowAddBeneficiary] = useState(false);
   const [showWithdrawForm, setShowWithdrawForm] = useState<string | null>(null);
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
@@ -246,10 +247,16 @@ export default function Dashboard() {
           My Wallets
         </button>
         <button
-          className={`py-2 px-4 font-medium ${activeTab === 'beneficiaries' ? 'border-b-2 border-blue-500' : ''}`}
-          onClick={() => setActiveTab('beneficiaries')}
+          className={`py-2 px-4 font-medium ${activeTab === 'onchain' ? 'border-b-2 border-blue-500' : ''}`}
+          onClick={() => setActiveTab('onchain')}
         >
-          Beneficiaries
+          On-chain Beneficiaries
+        </button>
+        <button
+          className={`py-2 px-4 font-medium ${activeTab === 'checkins' ? 'border-b-2 border-blue-500' : ''}`}
+          onClick={() => setActiveTab('checkins')}
+        >
+          Beneficiary Check-ins
         </button>
       </div>
 
@@ -341,7 +348,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {activeTab === 'beneficiaries' && (
+      {activeTab === 'onchain' && (
         <div className="bg-white p-6 rounded-lg shadow">
           <h2 className="text-lg font-semibold mb-4">All Beneficiaries</h2>
           {wallets.map((wallet) => (
@@ -359,6 +366,10 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
+      )}
+
+      {activeTab === 'checkins' && currentAccount?.address && (
+        <BeneficiaryList ownerAddress={currentAccount.address} />
       )}
 
       {showAddBeneficiary && (

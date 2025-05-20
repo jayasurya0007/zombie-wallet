@@ -81,3 +81,84 @@ export async function DELETE(request: Request) {
     await client.close();
   }
 }
+
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const ownerAddress = searchParams.get('ownerAddress');
+    
+    if (!ownerAddress) {
+      return NextResponse.json(
+        { success: false, error: 'Missing owner address' },
+        { status: 400 }
+      );
+    }
+
+    await client.connect();
+    const db = client.db(process.env.MONGODB_DB);
+    const collection = db.collection('beneficiaries');
+
+    const beneficiaries = await collection.find({ ownerAddress }).toArray();
+
+    return NextResponse.json(beneficiaries, { status: 200 });
+
+  } catch (error: any) {
+    console.error('Database error:', error);
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: error.message || 'Internal server error'
+      },
+      { status: 500 }
+    );
+  } finally {
+    await client.close();
+  }
+}
+
+export async function PUT(request: Request) {
+  try {
+    const body = await request.json();
+    const { ownerAddress, beneAddress } = body;
+
+    if (!ownerAddress || !beneAddress) {
+      return NextResponse.json(
+        { success: false, error: 'Missing required fields' },
+        { status: 400 }
+      );
+    }
+
+    await client.connect();
+    const db = client.db(process.env.MONGODB_DB);
+    const collection = db.collection('beneficiaries');
+
+    const result = await collection.updateOne(
+      { ownerAddress, beneAddress },
+      { $set: { timestamp_checkin: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Beneficiary not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      updatedCount: result.modifiedCount
+    }, { status: 200 });
+
+  } catch (error: any) {
+    console.error('Database error:', error);
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: error.message || 'Internal server error'
+      },
+      { status: 500 }
+    );
+  } finally {
+    await client.close();
+  }
+}
