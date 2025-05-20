@@ -52,6 +52,7 @@ export default function Dashboard() {
   const [availableCoins, setAvailableCoins] = useState<{ coinObjectId: string, balance: string }[]>([]);
   const [selectedBeneficiary, setSelectedBeneficiary] = useState<string | null>(null);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [isTransferring, setIsTransferring] = useState(false);
   const [storeStatus, setStoreStatus] = useState<{ loading: boolean; error: string | null }>({
     loading: false,
     error: null,
@@ -93,94 +94,107 @@ export default function Dashboard() {
   };
 
   const handleAddBeneficiary = async () => {
-      if (!selectedWallet || !currentAccount?.address) return;
-      const allocation = Number(beneficiaryForm.allocation);
-      
-      if (isNaN(allocation)){
-        alert('Invalid allocation amount');
-        return;
-      }
+    if (!selectedWallet || !currentAccount?.address) return;
+    const allocation = Number(beneficiaryForm.allocation);
+    
+    if (isNaN(allocation)){
+      alert('Invalid allocation amount');
+      return;
+    }
 
-      setStoreStatus({ loading: true, error: null });
+    setStoreStatus({ loading: true, error: null });
 
-      try {
-        // Execute blockchain transaction
-        await addBeneficiary(
-          selectedWallet,
-          beneficiaryForm.address,
-          allocation,
-          beneficiaryForm.depositCoinId
-        );
+    try {
+      await addBeneficiary(
+        selectedWallet,
+        beneficiaryForm.address,
+        allocation,
+        beneficiaryForm.depositCoinId
+      );
 
-        // Store in MongoDB
-        const storeResponse = await fetch('/api/beneficiaries', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            ownerAddress: currentAccount.address,
-            beneAddress: beneficiaryForm.address,
-            allocation: allocation,
-            walletAddress: selectedWallet,
-          }),
-        });
+      const storeResponse = await fetch('/api/beneficiaries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ownerAddress: currentAccount.address,
+          beneAddress: beneficiaryForm.address,
+          allocation: allocation,
+          walletAddress: selectedWallet,
+        }),
+      });
 
-        const result = await storeResponse.json();
-        
-        if (!storeResponse.ok) {
-          throw new Error(result.error || 'Failed to store beneficiary record');
-        }
+      const result = await storeResponse.json();
+      if (!storeResponse.ok) throw new Error(result.error || 'Failed to store beneficiary record');
 
-        setShowAddBeneficiary(false);
-        setBeneficiaryForm({ address: '', allocation: '', depositCoinId: '' });
-        await fetchWallets();
-      } catch (error) {
-        console.error('Storage error:', error);
-        setStoreStatus({
-          loading: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-      } finally {
-        setStoreStatus(prev => ({ ...prev, loading: false }));
-      }
-    };
+      setShowAddBeneficiary(false);
+      setBeneficiaryForm({ address: '', allocation: '', depositCoinId: '' });
+      await fetchWallets();
+    } catch (error) {
+      console.error('Storage error:', error);
+      setStoreStatus({
+        loading: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    } finally {
+      setStoreStatus(prev => ({ ...prev, loading: false }));
+    }
+  };
 
   const handleWithdraw = async (walletId: string) => {
-      if (!selectedBeneficiary || !currentAccount?.address) return;
-      
-      setIsWithdrawing(true);
-      try {
-        // Execute blockchain withdrawal
-        await withdraw(walletId, selectedBeneficiary);
+    if (!selectedBeneficiary || !currentAccount?.address) return;
+    
+    setIsWithdrawing(true);
+    try {
+      await withdraw(walletId, selectedBeneficiary);
 
-        // Remove from MongoDB after successful withdrawal
-        const deleteResponse = await fetch('/api/beneficiaries', {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            ownerAddress: currentAccount.address,
-            beneAddress: selectedBeneficiary
-          }),
-        });
+      const deleteResponse = await fetch('/api/beneficiaries', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ownerAddress: currentAccount.address,
+          beneAddress: selectedBeneficiary
+        }),
+      });
 
-        const result = await deleteResponse.json();
-        
-        if (!deleteResponse.ok) {
-          throw new Error(result.error || 'Failed to remove beneficiary record');
-        }
+      const result = await deleteResponse.json();
+      if (!deleteResponse.ok) throw new Error(result.error || 'Failed to remove beneficiary record');
 
-        setShowWithdrawForm(null);
-        setSelectedBeneficiary(null);
-        await fetchWallets();
-      } catch (error) {
-        alert(`Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      } finally {
-        setIsWithdrawing(false);
-      }
-    };
+      setShowWithdrawForm(null);
+      setSelectedBeneficiary(null);
+      await fetchWallets();
+    } catch (error) {
+      alert(`Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsWithdrawing(false);
+    }
+  };
+
+  const handleExecuteTransfer = async (walletId: string) => {
+    if (!currentAccount?.address) return;
+    
+    setIsTransferring(true);
+    try {
+      await executeTransfer(walletId);
+
+      const deleteResponse = await fetch('/api/beneficiaries', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ownerAddress: currentAccount.address,
+          walletAddress: walletId
+        }),
+      });
+
+      const result = await deleteResponse.json();
+      if (!deleteResponse.ok) throw new Error(result.error || 'Failed to delete beneficiaries');
+
+      await fetchWallets();
+    } catch (error) {
+      alert(`Transfer failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
 
   const handleDisconnect = () => {
     disconnect(undefined, {
@@ -289,18 +303,17 @@ export default function Dashboard() {
                     Add Beneficiary
                   </button>
                   <button
-                    onClick={async () => {
-                      setShowWithdrawForm(wallet.id);
-                    }}
+                    onClick={async () => setShowWithdrawForm(wallet.id)}
                     className="w-full bg-green-100 hover:bg-green-200 text-green-800 py-2 px-4 rounded"
                   >
                     Withdraw Funds
                   </button>
                   <button
-                    onClick={() => executeTransfer(wallet.id)}
-                    className="w-full bg-purple-100 hover:bg-purple-200 text-purple-800 py-2 px-4 rounded"
+                    onClick={() => handleExecuteTransfer(wallet.id)}
+                    disabled={isTransferring}
+                    className="w-full bg-purple-100 hover:bg-purple-200 text-purple-800 py-2 px-4 rounded disabled:opacity-50"
                   >
-                    Execute Transfer
+                    {isTransferring ? 'Transferring...' : 'Execute Transfer'}
                   </button>
                   {showWithdrawForm === wallet.id && (
                     <div className="mt-4 bg-gray-100 p-3 rounded">
