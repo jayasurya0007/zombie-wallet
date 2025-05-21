@@ -145,44 +145,6 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     };
   };
 
-
-  const getWalletBeneficiaries = async (walletId: string) => {
-    try {
-      const dynamicFields = await provider.getDynamicFields({
-        parentId: walletId,
-      });
-
-      const beneficiaries: Record<string, BeneficiaryData> = {};
-      
-      for (const field of dynamicFields.data) {
-        const fieldObj = await provider.getDynamicFieldObject({
-          parentId: walletId,
-          name: field.name
-        });
-
-        // Type assertion for field.name
-        const fieldName = field.name as DynamicFieldName;
-
-        if (
-          fieldName.value?.type === 'Address' &&
-          fieldName.value.fields?.key &&
-          fieldObj.data?.content?.dataType === 'moveObject' &&
-          hasFields(fieldObj.data.content)
-        ) {
-          const address = convertByteArrayToAddress(fieldName.value.fields.key);
-          const allocation = fieldObj.data.content.fields.value.fields.allocation;
-          beneficiaries[address] = {
-            allocation: allocation.toString()
-          };
-        }
-      }
-      return beneficiaries;
-    } catch (error) {
-      console.error("Error fetching beneficiaries:", error);
-      return {};
-    }
-  };
-
   const fetchWallets = async () => {
     if (!currentAccount?.address) return;
     setIsLoading(true);
@@ -199,20 +161,12 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         .map((node: any) => ({
           id: node.address,
           owner: node.asMoveObject.contents.json.owner,
-          beneficiaries: {}, // Will be populated separately
           beneficiary_addrs: node.asMoveObject.contents.json.beneficiary_addrs,
-          coin: { balance: node.asMoveObject.contents.json.coin.value }
+          coin: { balance: node.asMoveObject.contents.json.coin.value },
+          beneficiaries: {} // Initialize empty beneficiaries
         }));
 
-      // Populate beneficiaries data
-      const walletsWithBeneficiaries = await Promise.all(
-        filteredWallets.map(async (wallet: ZombieWallet) => ({
-          ...wallet,
-          beneficiaries: await getWalletBeneficiaries(wallet.id)
-        }))
-      );
-
-      setWallets(walletsWithBeneficiaries);
+      setWallets(filteredWallets);
     } catch (error) {
       console.error("Failed to fetch wallets:", error);
       setWallets([]);
