@@ -61,7 +61,7 @@ export default function Dashboard() {
     error: null,
   });
 
-  const { loading: graphqlLoading, error, data } = useQuery(GET_ALL_ZOMBIE_WALLETS, {
+  const { loading: graphqlLoading, error, data,refetch  } = useQuery(GET_ALL_ZOMBIE_WALLETS, {
   client,
   skip: !currentAccount?.address
 });
@@ -203,6 +203,32 @@ export default function Dashboard() {
     }
   };
 
+  const handleCreateWallet = async () => {
+  try {
+    // Clear Apollo cache for this query
+    client.cache.evict({ fieldName: 'objects' });
+    
+    // Create wallet and wait for confirmation
+    await createWallet();
+    
+    // Manually update both local state and Apollo cache
+    const newWallets = await fetchWallets();
+    
+    // Update Apollo cache with new data
+    client.cache.updateQuery(
+      { query: GET_ALL_ZOMBIE_WALLETS },
+      (data) => ({
+        objects: {
+          ...data?.objects,
+          nodes: [...(data?.objects?.nodes || []), ...newWallets]
+        }
+      })
+    );
+  } catch (error) {
+    console.error('Wallet creation failed:', error);
+  }
+};
+
   const handleDisconnect = () => {
     disconnect(undefined, {
       onSuccess: () => router.push('/')
@@ -238,7 +264,10 @@ export default function Dashboard() {
           </button>
         </div>
         <button
-          onClick={createWallet}
+          onClick={async () => {
+            await createWallet();
+            await refetch(); // Add this line to force refresh Apollo data
+          }}
           disabled={contractLoading}
           className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded"
         >

@@ -23,6 +23,17 @@ export interface ZombieWallet {
   coin: { balance: string };
 }
 
+  // Type assertion for field.name
+export type DynamicFieldName = {
+    type: string;
+    value?: {
+      type: string;
+      fields?: {
+        key?: Uint8Array | number[];
+      };
+    };
+  };
+
 interface ContractContextType {
   isConnected: boolean;
   wallets: ZombieWallet[];
@@ -37,7 +48,7 @@ interface ContractContextType {
   withdraw: (walletId: string, beneficiary: string) => Promise<void>;
   executeTransfer: (walletId: string) => Promise<void>;
   claimAllocation: (walletId: string) => Promise<void>;
-  fetchWallets: () => Promise<void>;
+  fetchWallets: () => Promise<ZombieWallet[]>;
   getCoins: () => Promise<{ coinObjectId: string, balance: string }[]>;
   getBeneficiaryData: (
     walletId: string, 
@@ -129,29 +140,14 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     }
   `;
 
-  // Type guard for SuiParsedData with fields
-  function hasFields(obj: unknown): obj is { fields: any } {
-    return typeof obj === 'object' && obj !== null && 'fields' in obj;
-  }
-
-  // Type assertion for field.name
-  type DynamicFieldName = {
-    type: string;
-    value?: {
-      type: string;
-      fields?: {
-        key?: Uint8Array | number[];
-      };
-    };
-  };
-
   const fetchWallets = async () => {
-    if (!currentAccount?.address) return;
+    if (!currentAccount?.address) return [];
     setIsLoading(true);
     try {
       const response = await apolloClient.query({
         query: FETCH_ALL_ZOMBIE_WALLETS,
         variables: { cursor: null },
+        fetchPolicy: 'network-only' // Bypass cache
       });
 
       const filteredWallets = response.data.objects.nodes
@@ -163,13 +159,15 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
           owner: node.asMoveObject.contents.json.owner,
           beneficiary_addrs: node.asMoveObject.contents.json.beneficiary_addrs,
           coin: { balance: node.asMoveObject.contents.json.coin.value },
-          beneficiaries: {} // Initialize empty beneficiaries
+          beneficiaries: {}
         }));
 
       setWallets(filteredWallets);
+      return filteredWallets; // Return the fetched wallets
     } catch (error) {
       console.error("Failed to fetch wallets:", error);
       setWallets([]);
+      return [];
     } finally {
       setIsLoading(false);
     }
@@ -182,9 +180,20 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
       target: `${ZOMBIE_MODULE}::zombie::create_wallet`,
       arguments: [],
     });
-    await signAndExecuteTransactionBlock({ 
+    
+    // Execute transaction and wait for confirmation
+    const result = await signAndExecuteTransactionBlock({ 
       transaction: tx,
     });
+    
+    // Wait for transaction finality
+    await provider.waitForTransaction({
+      digest: result.digest,
+      timeout: 30 * 1000,
+      pollInterval: 2 * 1000
+    });
+    
+    // Force refresh wallets
     await fetchWallets();
   };
 
