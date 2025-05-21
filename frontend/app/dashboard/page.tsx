@@ -63,7 +63,8 @@ export default function Dashboard() {
 
   const { loading: graphqlLoading, error, data,refetch  } = useQuery(GET_ALL_ZOMBIE_WALLETS, {
   client,
-  skip: !currentAccount?.address
+  skip: !currentAccount?.address,
+  fetchPolicy: 'network-only' 
 });
 
   useEffect(() => {
@@ -135,7 +136,10 @@ export default function Dashboard() {
         inactivityDuration: '30',
         inactivityUnit: 'days'
       });
-      await fetchWallets();
+      client.cache.evict({ fieldName: 'objects' });
+      await Promise.all([
+        fetchWallets()
+      ]);
     } catch (error) {
       console.error('Storage error:', error);
       setStoreStatus({
@@ -165,6 +169,13 @@ export default function Dashboard() {
 
       const result = await deleteResponse.json();
       if (!deleteResponse.ok) throw new Error(result.error || 'Failed to remove beneficiary record');
+
+       // Clear cache and refresh data
+      client.cache.evict({ fieldName: 'objects' });
+      await Promise.all([
+        fetchWallets(),
+        refetch()
+      ]);
 
       setShowWithdrawForm(null);
       setSelectedBeneficiary(null);
@@ -203,32 +214,6 @@ export default function Dashboard() {
     }
   };
 
-  const handleCreateWallet = async () => {
-  try {
-    // Clear Apollo cache for this query
-    client.cache.evict({ fieldName: 'objects' });
-    
-    // Create wallet and wait for confirmation
-    await createWallet();
-    
-    // Manually update both local state and Apollo cache
-    const newWallets = await fetchWallets();
-    
-    // Update Apollo cache with new data
-    client.cache.updateQuery(
-      { query: GET_ALL_ZOMBIE_WALLETS },
-      (data) => ({
-        objects: {
-          ...data?.objects,
-          nodes: [...(data?.objects?.nodes || []), ...newWallets]
-        }
-      })
-    );
-  } catch (error) {
-    console.error('Wallet creation failed:', error);
-  }
-};
-
   const handleDisconnect = () => {
     disconnect(undefined, {
       onSuccess: () => router.push('/')
@@ -266,7 +251,7 @@ export default function Dashboard() {
         <button
           onClick={async () => {
             await createWallet();
-            await refetch(); // Add this line to force refresh Apollo data
+            await refetch(); 
           }}
           disabled={contractLoading}
           className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded"
