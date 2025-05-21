@@ -2,46 +2,26 @@ import { gql } from '@apollo/client';
 import { ZOMBIE_WALLET_TYPE} from '@/config/constants'; 
 
 // queries.ts
-export const GET_ZOMBIE_WALLETS_BY_OWNER = gql`
-  query GetZombieWalletsByOwner($ownerAddress: String!) {
+export const GET_ALL_ZOMBIE_WALLETS = gql`
+  query GetAllZombieWallets {
     objects(
-      filter: {
-        type: "${ZOMBIE_WALLET_TYPE}",
-        owner: $ownerAddress
+      filter: { 
+        type: "${ZOMBIE_WALLET_TYPE}"
       }
-      first: 10
+      first: 20
     ) {
       nodes {
+        address
+        owner {
+          __typename
+          ... on Shared {
+            initialSharedVersion
+          }
+        }
         asMoveObject {
-          address
           contents {
-            type {
-              repr
-            }
-            data
-          }
-          owner {
-            __typename
-            ... on AddressOwner {
-              owner {
-                address
-              }
-            }
-          }
-          dynamicFields(first: 5) {
-            nodes {
-              name {
-                bcs
-              }
-              value {
-                ... on MoveValue {
-                  type {
-                    repr
-                  }
-                  bcs
-                }
-              }
-            }
+            type { repr }
+            json
           }
         }
       }

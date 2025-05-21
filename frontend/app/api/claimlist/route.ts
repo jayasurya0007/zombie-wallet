@@ -47,3 +47,47 @@ export async function GET(request: Request) {
     await client.close();
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const { walletAddress, beneAddress } = await request.json();
+    
+    if (!walletAddress || !beneAddress) {
+      return NextResponse.json(
+        { success: false, error: 'Missing required fields' },
+        { status: 400 }
+      );
+    }
+
+    await client.connect();
+    const db = client.db(process.env.MONGODB_DB);
+    const collection = db.collection('beneficiaries');
+
+    // Delete the specific beneficiary entry
+    const result = await collection.deleteOne({
+      walletAddress,
+      beneAddress
+    });
+
+    if (result.deletedCount === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Document not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json(
+      { success: true, message: 'Beneficiary deleted' },
+      { status: 200 }
+    );
+
+  } catch (error: any) {
+    console.error('Database error:', error);
+    return NextResponse.json(
+      { success: false, error: error.message || 'Internal server error' },
+      { status: 500 }
+    );
+  } finally {
+    await client.close();
+  }
+}

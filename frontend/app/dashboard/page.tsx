@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import { formatBalance, formatAddressDisplay, formatAddress } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import client from '@/lib/client';
-import { GET_ZOMBIE_WALLETS_BY_OWNER } from '@/lib/queries';
+import { GET_ALL_ZOMBIE_WALLETS } from '@/lib/queries';
 import BeneficiaryList from '@/app/components/BeneficiaryList';
 import ClaimList from '@/app/components/ClaimList';
 
@@ -61,11 +61,10 @@ export default function Dashboard() {
     error: null,
   });
 
-  const { loading: graphqlLoading, error, data } = useQuery(GET_ZOMBIE_WALLETS_BY_OWNER, {
-    client,
-    variables: { ownerAddress: currentAccount?.address || '' },
-    skip: !currentAccount?.address
-  });
+  const { loading: graphqlLoading, error, data } = useQuery(GET_ALL_ZOMBIE_WALLETS, {
+  client,
+  skip: !currentAccount?.address
+});
 
   useEffect(() => {
     if (!currentAccount?.address) {
@@ -83,18 +82,14 @@ export default function Dashboard() {
 
   const getWalletBeneficiaries = (walletId: string): string[] => {
     const wallet = data?.objects?.nodes?.find(
-      (w: WalletData) => w.asMoveObject.address === walletId
+      (w: any) => w.address === walletId
     );
-    return wallet?.asMoveObject.contents.data.Struct
-      .find((f: any) => f.name === 'beneficiary_addrs')?.value.Vector
-      .map((b: { Address: number[] }) => formatAddress(b.Address)) || [];
+    return wallet?.asMoveObject.contents.json.beneficiary_addrs || [];
   };
 
-  const getWalletBalance = (wallet: WalletData) => {
-    const coinValue = wallet.asMoveObject.contents.data.Struct
-      .find((f: any) => f.name === 'coin')?.value.Struct[0]?.value.Number || '0';
-    return parseInt(coinValue) / 100000000;
-  };
+  const getWalletBalance = (wallet: any) => {
+  return parseInt(wallet.asMoveObject.contents.json.coin.value) / 1_000_000_000;
+};
 
   const handleAddBeneficiary = async () => {
     if (!selectedWallet || !currentAccount?.address) return;
@@ -296,7 +291,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {wallets.map((wallet) => {
             const walletData = data?.objects?.nodes?.find(
-              (w: WalletData) => w.asMoveObject.address === wallet.id
+              (w: any) => w.address === wallet.id
             );
             
             const balance = walletData ? getWalletBalance(walletData) : 0;
@@ -343,7 +338,7 @@ export default function Dashboard() {
                         <option value="">Select Beneficiary</option>
                         {beneficiaries.map((addr) => (
                           <option key={addr} value={addr}>
-                            {formatAddressDisplay(addr)}
+                            {addr.slice(0, 6)}...{addr.slice(-4)}
                           </option>
                         ))}
                       </select>

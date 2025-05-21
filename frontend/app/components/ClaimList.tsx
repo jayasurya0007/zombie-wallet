@@ -29,22 +29,29 @@ const ClaimList = ({ ownerAddress }: ClaimListProps) => {
   const [error, setError] = useState<string | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
 
-  const calculateTimeRemaining = (beneficiary: Beneficiary) => {
-  const lastCheckin = new Date(beneficiary.timestamp_checkin).getTime();
-  const durationMap = {
-    minutes: 60 * 1000,
-    hours: 60 * 60 * 1000,
-    days: 24 * 60 * 60 * 1000
-  } as const; // Add const assertion
+  // Add refresh interval for real-time updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setBeneficiaries((prev) => [...prev]);
+    }, 60000); // Update every minute
 
-  // Add type assertion for the unit
-  const unit = beneficiary.inactivityUnit as keyof typeof durationMap;
-  
-  const expirationTime = lastCheckin + 
-    (beneficiary.inactivityDuration * durationMap[unit]);
-  
-  return expirationTime - Date.now();
-};
+    return () => clearInterval(interval);
+  }, []);
+
+  const calculateTimeRemaining = (beneficiary: Beneficiary) => {
+    const lastCheckin = new Date(beneficiary.timestamp_checkin).getTime();
+    const durationMap = {
+      minutes: 60 * 1000,
+      hours: 60 * 60 * 1000,
+      days: 24 * 60 * 60 * 1000
+    } as const;
+
+    const unit = beneficiary.inactivityUnit as keyof typeof durationMap;
+    const expirationTime = lastCheckin + 
+      (beneficiary.inactivityDuration * durationMap[unit]);
+    
+    return expirationTime - Date.now();
+  };
 
   const fetchClaims = async () => {
     try {
@@ -75,23 +82,27 @@ const ClaimList = ({ ownerAddress }: ClaimListProps) => {
   };
 
   const handleClaim = async (walletAddress: string) => {
-    if (!currentAccount?.address) return;
-    
-    setClaiming(walletAddress);
-    try {
-      await claimAllocation(walletAddress);
-      await fetch(`/api/beneficiaries`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress, beneAddress: currentAccount.address })
-      });
-      await fetchClaims();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Claim failed');
-    } finally {
-      setClaiming(null);
-    }
-  };
+  if (!currentAccount?.address) return;
+  
+  setClaiming(walletAddress);
+  try {
+    await claimAllocation(walletAddress);
+    // Change from PUT to DELETE and update endpoint
+    await fetch(`/api/claimlist`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        walletAddress, 
+        beneAddress: currentAccount.address 
+      })
+    });
+    await fetchClaims();
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Claim failed');
+  } finally {
+    setClaiming(null);
+  }
+};
 
   if (loading) return <div className="flex justify-center p-4">Loading...</div>;
   if (error) return (

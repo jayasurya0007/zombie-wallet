@@ -2,7 +2,7 @@ module zombiewallet::zombie {
     use sui::coin::{Coin, from_balance, into_balance};
     use sui::balance::{Balance, split, join, value, zero};
     use sui::object::{UID, new, delete};
-    use sui::transfer::public_transfer;
+    use sui::transfer::{public_transfer, share_object};
     use sui::tx_context::{sender, TxContext};
     use sui::sui::SUI;
     use sui::table::{Table, contains, add, borrow_mut, borrow, remove, destroy_empty};
@@ -27,6 +27,7 @@ module zombiewallet::zombie {
         coin: Balance<SUI>
     }
 
+    /// Create and share the wallet object so anyone can interact with it
     public entry fun create_wallet(ctx: &mut TxContext) {
         let wallet = ZombieWallet {
             id: new(ctx),
@@ -35,9 +36,10 @@ module zombiewallet::zombie {
             beneficiary_addrs: vector::empty<address>(),
             coin: zero()
         };
-        public_transfer(wallet, sender(ctx));
+        share_object(wallet);
     }
 
+    /// Only the owner can add a beneficiary
     public entry fun add_beneficiary(
         wallet: &mut ZombieWallet,
         beneficiary: address,
@@ -62,20 +64,18 @@ module zombiewallet::zombie {
         vector::push_back(&mut wallet.beneficiary_addrs, beneficiary);
     }
 
+    /// Only the owner can withdraw on behalf of a beneficiary
     public entry fun withdraw(
         wallet: &mut ZombieWallet,
         beneficiary: address,
         ctx: &mut TxContext
     ) {
-        // Validate ownership and beneficiary existence
         assert!(sender(ctx) == wallet.owner, EInvalidOwnership);
         assert!(contains(&wallet.beneficiaries, beneficiary), ENotBeneficiary);
 
-        // Remove beneficiary data to get allocation amount
         let data = remove(&mut wallet.beneficiaries, beneficiary);
         let allocation_amount = data.allocation;
 
-        // Remove from beneficiary address list
         let addr_vector = &mut wallet.beneficiary_addrs;
         let len = vector::length(addr_vector);
         let mut i = 0;
@@ -87,12 +87,12 @@ module zombiewallet::zombie {
             i = i + 1;
         };
 
-        // Verify and transfer funds
         assert!(allocation_amount <= value(&wallet.coin), EInvalidWithdrawAmount);
         let coin = from_balance(split(&mut wallet.coin, allocation_amount), ctx);
         public_transfer(coin, wallet.owner);
     }
 
+    /// Only the owner can execute the full transfer to all beneficiaries
     public entry fun execute_transfer(
         wallet: ZombieWallet,
         ctx: &mut TxContext
@@ -108,7 +108,6 @@ module zombiewallet::zombie {
         let len = vector::length(&beneficiary_addrs);
         assert!(len > 0, EInvalidAllocations);
 
-        // Validate total allocations
         let mut total_allocations = 0;
         let mut i = 0;
         while (i < len) {
@@ -119,7 +118,6 @@ module zombiewallet::zombie {
         };
         assert!(total_allocations <= value(&coin), EInvalidAllocations);
 
-        // Distribute funds
         let mut coin_mut = coin;
         let mut i = 0;
         while (i < len - 1) {
@@ -131,7 +129,6 @@ module zombiewallet::zombie {
             i = i + 1;
         };
 
-        // Final beneficiary gets remaining balance
         let addr = *vector::borrow(&beneficiary_addrs, len - 1);
         let last_coin = from_balance(coin_mut, ctx);
         public_transfer(last_coin, addr);
@@ -141,6 +138,7 @@ module zombiewallet::zombie {
         delete(id);
     }
 
+    /// Now any beneficiary can call this directly (no owner check)
     public entry fun claim_allocation(
         wallet: &mut ZombieWallet,
         ctx: &mut TxContext
@@ -154,7 +152,6 @@ module zombiewallet::zombie {
         let coin = from_balance(split(&mut wallet.coin, data.allocation), ctx);
         public_transfer(coin, caller);
 
-        // Remove from address list
         let mut i = 0;
         let len = vector::length(&wallet.beneficiary_addrs);
         while (i < len) {
@@ -166,7 +163,6 @@ module zombiewallet::zombie {
         }
     }
 
-    // View functions unchanged
     public fun get_beneficiary_addrs(wallet: &ZombieWallet): &vector<address> {
         &wallet.beneficiary_addrs
     }

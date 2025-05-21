@@ -10,13 +10,6 @@ import { Transaction } from '@mysten/sui/transactions';
 import { ApolloClient, InMemoryCache, gql } from '@apollo/client';
 import { fromBase64 } from '@mysten/bcs';
 import { ZOMBIE_MODULE, ZOMBIE_WALLET_TYPE } from '@/config/constants';
-import { bcs } from '@mysten/bcs';
-
-// Initialize Apollo Client
-const apolloClient = new ApolloClient({
-  uri: 'https://sui-testnet.mystenlabs.com/graphql',
-  cache: new InMemoryCache(),
-});
 
 export interface BeneficiaryData {
   allocation: string;
@@ -54,15 +47,14 @@ interface ContractContextType {
 
 const ContractContext = createContext<ContractContextType>({} as ContractContextType);
 
-export function ContractProvider({ children }: { children: React.ReactNode }) {
-  const currentAccount = useCurrentAccount();
-  const { mutateAsync: signAndExecuteTransactionBlock } = useSignAndExecuteTransaction();
-  const provider = useSuiClient();
-  const [wallets, setWallets] = useState<ZombieWallet[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+// Apollo Client
+const apolloClient = new ApolloClient({
+  uri: 'https://sui-testnet.mystenlabs.com/graphql',
+  cache: new InMemoryCache(),
+});
 
-  // Helper function to convert byte array to address
-  const convertByteArrayToAddress = (bytes: Uint8Array | number[]): string => {
+// Helper function to convert byte array to address
+const convertByteArrayToAddress = (bytes: Uint8Array | number[]): string => {
   const byteArray = Array.isArray(bytes) ? bytes : Array.from(bytes);
   return '0x' + byteArray
     .slice(0, 32)
@@ -70,14 +62,21 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     .join('');
 };
 
-  // Simplified beneficiary data parser
-  const parseBeneficiaryData = (bcsData: string): BeneficiaryData => {
-    const bytes = fromBase64(bcsData);
-    const view = new DataView(bytes.buffer);
-    return {
-      allocation: view.getBigUint64(0, true).toString(),
-    };
+// Parse BCS beneficiary data (allocation)
+const parseBeneficiaryData = (bcsData: string): BeneficiaryData => {
+  const bytes = fromBase64(bcsData);
+  const view = new DataView(bytes.buffer);
+  return {
+    allocation: view.getBigUint64(0, true).toString(),
   };
+};
+
+export function ContractProvider({ children }: { children: React.ReactNode }) {
+  const currentAccount = useCurrentAccount();
+  const { mutateAsync: signAndExecuteTransactionBlock } = useSignAndExecuteTransaction();
+  const provider = useSuiClient();
+  const [wallets, setWallets] = useState<ZombieWallet[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   const getCoins = async () => {
     if (!currentAccount?.address) return [];
@@ -95,48 +94,125 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
     if (currentAccount?.address) {
       fetchWallets();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAccount?.address]);
+
+  const FETCH_ALL_ZOMBIE_WALLETS = gql`
+    query GetAllZombieWallets($cursor: String) {
+      objects(
+        filter: { 
+          type: "${ZOMBIE_WALLET_TYPE}"
+        }
+        first: 20
+        after: $cursor
+      ) {
+        nodes {
+          address
+          owner {
+            __typename
+            ... on Shared {
+              initialSharedVersion
+            }
+          }
+          asMoveObject {
+            contents {
+              type { repr }
+              json
+            }
+          }
+        }
+        pageInfo {
+          endCursor
+          hasNextPage
+        }
+      }
+    }
+  `;
+
+  // Type guard for SuiParsedData with fields
+  function hasFields(obj: unknown): obj is { fields: any } {
+    return typeof obj === 'object' && obj !== null && 'fields' in obj;
+  }
+
+  // Type assertion for field.name
+  type DynamicFieldName = {
+    type: string;
+    value?: {
+      type: string;
+      fields?: {
+        key?: Uint8Array | number[];
+      };
+    };
+  };
+
+
+  const getWalletBeneficiaries = async (walletId: string) => {
+    try {
+      const dynamicFields = await provider.getDynamicFields({
+        parentId: walletId,
+      });
+
+      const beneficiaries: Record<string, BeneficiaryData> = {};
+      
+      for (const field of dynamicFields.data) {
+        const fieldObj = await provider.getDynamicFieldObject({
+          parentId: walletId,
+          name: field.name
+        });
+
+        // Type assertion for field.name
+        const fieldName = field.name as DynamicFieldName;
+
+        if (
+          fieldName.value?.type === 'Address' &&
+          fieldName.value.fields?.key &&
+          fieldObj.data?.content?.dataType === 'moveObject' &&
+          hasFields(fieldObj.data.content)
+        ) {
+          const address = convertByteArrayToAddress(fieldName.value.fields.key);
+          const allocation = fieldObj.data.content.fields.value.fields.allocation;
+          beneficiaries[address] = {
+            allocation: allocation.toString()
+          };
+        }
+      }
+      return beneficiaries;
+    } catch (error) {
+      console.error("Error fetching beneficiaries:", error);
+      return {};
+    }
+  };
 
   const fetchWallets = async () => {
     if (!currentAccount?.address) return;
-    
     setIsLoading(true);
     try {
-      const response = await provider.getOwnedObjects({
-        owner: currentAccount.address,
-        filter: { StructType: ZOMBIE_WALLET_TYPE },
-        options: { showContent: true },
+      const response = await apolloClient.query({
+        query: FETCH_ALL_ZOMBIE_WALLETS,
+        variables: { cursor: null },
       });
 
-      const wallets = await Promise.all(
-        response.data.map(async (obj: any) => {
-          try {
-            const content = obj.data?.content;
-            if (!content || content.dataType !== 'moveObject') return null;
+      const filteredWallets = response.data.objects.nodes
+        .filter((node: any) => 
+          node.asMoveObject.contents.json.owner === currentAccount.address
+        )
+        .map((node: any) => ({
+          id: node.address,
+          owner: node.asMoveObject.contents.json.owner,
+          beneficiaries: {}, // Will be populated separately
+          beneficiary_addrs: node.asMoveObject.contents.json.beneficiary_addrs,
+          coin: { balance: node.asMoveObject.contents.json.coin.value }
+        }));
 
-            // Add null-safe access for wallet fields
-            const fields = content.fields || {};
-            const coinFields = fields.coin?.fields || { value: '0' };
-
-            return {
-              id: obj.data.objectId,
-              owner: fields.owner || '',
-              beneficiaries: {},
-              beneficiary_addrs: (fields.beneficiary_addrs || []).map(
-                (addr: any) => convertByteArrayToAddress(addr)
-              ),
-              coin: { 
-                balance: coinFields.value || '0'
-              }
-            };
-          } catch (error) {
-            console.error('Error processing wallet:', error);
-            return null;
-          }
-        })
+      // Populate beneficiaries data
+      const walletsWithBeneficiaries = await Promise.all(
+        filteredWallets.map(async (wallet: ZombieWallet) => ({
+          ...wallet,
+          beneficiaries: await getWalletBeneficiaries(wallet.id)
+        }))
       );
 
-      setWallets(wallets.filter(Boolean) as ZombieWallet[]);
+      setWallets(walletsWithBeneficiaries);
     } catch (error) {
       console.error("Failed to fetch wallets:", error);
       setWallets([]);
@@ -152,30 +228,24 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
       target: `${ZOMBIE_MODULE}::zombie::create_wallet`,
       arguments: [],
     });
-    await signAndExecuteTransactionBlock({ transaction: tx });
+    await signAndExecuteTransactionBlock({ 
+      transaction: tx,
+    });
     await fetchWallets();
   };
 
   const addBeneficiary = async (
-  walletId: string,
-  beneficiary: string,
-  allocation: number,
-  depositCoinId: string
-) => {
-  if (!currentAccount?.address) throw new Error("No connected account");
-
-    // Convert SUI to MIST (1 SUI = 1e9 MIST)
+    walletId: string,
+    beneficiary: string,
+    allocation: number,
+    depositCoinId: string
+  ) => {
+    if (!currentAccount?.address) throw new Error("No connected account");
     const allocationMist = Math.round(allocation * 1e9);
-    
     const tx = new Transaction();
-
-    // Correct method name and syntax for splitting coins
     const [depositCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(allocationMist)]);
-
-    // Set explicit gas budget (0.2 SUI)
-    tx.setGasBudget(20000000); // 200 million MIST = 0.2 SUI
-
-  tx.moveCall({
+    tx.setGasBudget(20000000); // 0.2 SUI
+    tx.moveCall({
       target: `${ZOMBIE_MODULE}::zombie::add_beneficiary`,
       arguments: [
         tx.object(walletId),
@@ -184,110 +254,79 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
         depositCoin,
       ],
     });
+    try {
+      await signAndExecuteTransactionBlock({ transaction: tx });
+      await fetchWallets();
+    } catch (error) {
+      console.error("Transaction failed:", error);
+      const message = error instanceof Error ? error.message : 'Unknown error occurred';
+      throw new Error(`Transaction failed: ${message}`);
+    }
+  };
 
-  try {
-    await signAndExecuteTransactionBlock({
-      transaction: tx,
-    });
-    await fetchWallets();
-  } catch (error) {
-    console.error("Transaction failed:", error);
-    const message = error instanceof Error ? error.message : 'Unknown error occurred';
-    throw new Error(`Transaction failed: ${message}`);
-  }
-};
-
-
- 
- const withdraw = async (walletId: string, beneficiary: string): Promise<void> => {
-  if (!currentAccount?.address) throw new Error("No connected account");
-
-  try {
-    // 1. Get fresh wallet data first
-    const { data: walletData } = await provider.getObject({
-      id: walletId,
-      options: { showContent: false }
-    });
-
-    if (!walletData) throw new Error("Wallet not found");
-
-    // 2. Build transaction with explicit version
-    const tx = new Transaction();
-    tx.setGasBudget(20000000); // 0.02 SUI
-
-    tx.moveCall({
-      target: `${ZOMBIE_MODULE}::zombie::withdraw`,
-      arguments: [
-        tx.object(walletId),
-        tx.pure.address(beneficiary)
-      ]
-    });
-
-    // 3. Execute and wait for confirmation
-    const { digest } = await signAndExecuteTransactionBlock({
-      transaction: tx
-    });
-
-    // 4. Wait for finality
-    await provider.waitForTransaction({
-      digest,
-      timeout: 30 * 1000,
-      pollInterval: 2 * 1000
-    });
-
-    // 5. Force refresh wallet data
-    await fetchWallets();
-  } catch (error) {
-    console.error("Withdrawal failed:", error);
-    throw new Error(`Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-};
+  const withdraw = async (walletId: string, beneficiary: string): Promise<void> => {
+    if (!currentAccount?.address) throw new Error("No connected account");
+    try {
+      const { data: walletData } = await provider.getObject({
+        id: walletId,
+        options: { showContent: false }
+      });
+      if (!walletData) throw new Error("Wallet not found");
+      const tx = new Transaction();
+      tx.setGasBudget(20000000);
+      tx.moveCall({
+        target: `${ZOMBIE_MODULE}::zombie::withdraw`,
+        arguments: [
+          tx.object(walletId),
+          tx.pure.address(beneficiary)
+        ]
+      });
+      const { digest } = await signAndExecuteTransactionBlock({
+        transaction: tx
+      });
+      await provider.waitForTransaction({
+        digest,
+        timeout: 30 * 1000,
+        pollInterval: 2 * 1000
+      });
+      await fetchWallets();
+    } catch (error) {
+      console.error("Withdrawal failed:", error);
+      throw new Error(`Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
 
   const executeTransfer = async (walletId: string) => {
-  try {
-    // 1. Get fresh wallet data
-    const walletData = await provider.getObject({
-      id: walletId,
-      options: { showContent: false }
-    });
-
-    if (!walletData.data) {
-      throw new Error("Wallet not found");
+    try {
+      const walletData = await provider.getObject({
+        id: walletId,
+        options: { showContent: false }
+      });
+      if (!walletData.data) {
+        throw new Error("Wallet not found");
+      }
+      const tx = new Transaction();
+      tx.setGasBudget(200000000);
+      tx.moveCall({
+        target: `${ZOMBIE_MODULE}::zombie::execute_transfer`,
+        arguments: [tx.object(walletId)]
+      });
+      const { digest } = await signAndExecuteTransactionBlock({
+        transaction: tx
+      });
+      await provider.waitForTransaction({
+        digest,
+        timeout: 30 * 1000,
+        pollInterval: 2 * 1000
+      });
+      await fetchWallets();
+    } catch (error) {
+      console.error("Execute Transfer Failed:", error);
+      throw new Error(
+        `Failed to execute transfer: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
     }
-
-    // 2. Build transaction with proper object reference
-    const tx = new Transaction();
-    tx.setGasBudget(200000000); // 0.2 SUI
-    
-    tx.moveCall({
-      target: `${ZOMBIE_MODULE}::zombie::execute_transfer`,
-      arguments: [
-        // Use proper object reference format
-        tx.object(walletId)
-      ]
-    });
-
-    // 3. Execute and wait for confirmation
-    const { digest } = await signAndExecuteTransactionBlock({
-      transaction: tx
-    });
-
-    // 4. Wait for transaction finality
-    await provider.waitForTransaction({
-      digest,
-      timeout: 30 * 1000,
-      pollInterval: 2 * 1000
-    });
-
-    // 5. Update local state
-    await fetchWallets();
-  } catch (error) {
-    console.error("Execute Transfer Failed:", error);
-    throw new Error(
-      `Failed to execute transfer: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-  }
-};
+  };
 
   const claimAllocation = async (walletId: string) => {
     const tx = new Transaction();
@@ -300,54 +339,39 @@ export function ContractProvider({ children }: { children: React.ReactNode }) {
   };
 
   const getBeneficiaryData = async (
-  walletId: string,
-  beneficiaryAddr: string
-): Promise<BeneficiaryData | null> => {
-  try {
-    const dynamicFields = await provider.getDynamicFields({
-      parentId: walletId,
-    });
-
-    for (const field of dynamicFields.data) {
-      // Add type assertion for the field name structure
-      const fieldName = field.name as {
-        type: string;
-        value?: {
-          type: string;
-          fields?: {
-            key?: Uint8Array | number[];
-          };
-        };
-      };
-
-      // Check for SuiAddress type and extract bytes
-      if (
-        fieldName.value?.type === 'Address' &&
-        fieldName.value.fields?.key
-      ) {
-        const addressBytes = Array.from(fieldName.value.fields.key);
-        const address = convertByteArrayToAddress(addressBytes);
-
-        if (address === beneficiaryAddr) {
-          const fieldObj = await provider.getDynamicFieldObject({
-            parentId: walletId,
-            name: field.name
-          });
-
-          // Add type guard for BCS data
-          const bcsData = (fieldObj.data?.content as any)?.bcs?.bcsBytes;
-          if (typeof bcsData === 'string') {
-            return parseBeneficiaryData(bcsData);
+    walletId: string,
+    beneficiaryAddr: string
+  ): Promise<BeneficiaryData | null> => {
+    try {
+      const dynamicFields = await provider.getDynamicFields({
+        parentId: walletId,
+      });
+      for (const field of dynamicFields.data) {
+        const fieldName = field.name as DynamicFieldName;
+        if (
+          fieldName.value?.type === 'Address' &&
+          fieldName.value.fields?.key
+        ) {
+          const addressBytes = Array.from(fieldName.value.fields.key);
+          const address = convertByteArrayToAddress(addressBytes);
+          if (address === beneficiaryAddr) {
+            const fieldObj = await provider.getDynamicFieldObject({
+              parentId: walletId,
+              name: field.name
+            });
+            const bcsData = (fieldObj.data?.content as any)?.bcs?.bcsBytes;
+            if (typeof bcsData === 'string') {
+              return parseBeneficiaryData(bcsData);
+            }
           }
         }
       }
+      return null;
+    } catch (error) {
+      console.error("Failed to get beneficiary data:", error);
+      return null;
     }
-    return null;
-  } catch (error) {
-    console.error("Failed to get beneficiary data:", error);
-    return null;
-  }
-};
+  };
 
   return (
     <ContractContext.Provider
