@@ -24,6 +24,9 @@ const apolloClient = new ApolloClient({
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        <link href="https://fonts.googleapis.com/css2?family=Creepster&display=swap" rel="stylesheet" />
+      </head>
       <body>
         <QueryClientProvider client={queryClient}>
           <ApolloProvider client={apolloClient}>

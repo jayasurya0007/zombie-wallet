@@ -11,20 +11,6 @@ import { GET_ALL_ZOMBIE_WALLETS } from '@/lib/queries';
 import BeneficiaryList from '@/app/components/BeneficiaryList';
 import ClaimList from '@/app/components/ClaimList';
 
-interface WalletData {
-  asMoveObject: {
-    address: string;
-    contents: {
-      data: {
-        Struct: Array<{
-          name: string;
-          value: any;
-        }>;
-      };
-    };
-  };
-}
-
 export default function Dashboard() {
   const router = useRouter();
   const {
@@ -66,6 +52,13 @@ export default function Dashboard() {
   skip: !currentAccount?.address,
   fetchPolicy: 'network-only' 
 });
+
+  useEffect(() => {
+      setShowAddBeneficiary(false);
+      setShowWithdrawForm(null);
+      setSelectedBeneficiary(null);
+      setSelectedWallet(null);
+    }, [activeTab]);
 
   useEffect(() => {
     if (!currentAccount?.address) {
