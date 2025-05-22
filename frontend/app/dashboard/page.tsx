@@ -337,7 +337,7 @@ export default function Dashboard() {
                   </button>
                   <button
                     onClick={() => handleExecuteTransfer(wallet.id)}
-                    disabled={isTransferring}
+                    disabled={isTransferring || beneficiaries.length === 0}
                     className="w-full bg-purple-100 hover:bg-purple-200 text-purple-800 py-2 px-4 rounded disabled:opacity-50"
                   >
                     {isTransferring ? 'Transferring...' : 'Execute Transfer'}

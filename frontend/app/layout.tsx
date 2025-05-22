@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { getFullnodeUrl } from '@mysten/sui/client';
 import { ContractProvider } from '@/app/context/ContractContext';
 import { ApolloClient, InMemoryCache, ApolloProvider } from '@apollo/client';
+import './globals.css';
 
 const queryClient = new QueryClient();
 
