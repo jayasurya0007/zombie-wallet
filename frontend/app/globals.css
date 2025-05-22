@@ -1,3 +1,5 @@
+/* app/globals.css */
+
 @import url('https://fonts.googleapis.com/css2?family=Creepster&display=swap');
 
 @tailwind base;
@@ -48,4 +50,34 @@
   .font-zombie {
     font-family: 'Creepster', cursive;
   }
+}
+
+
+/* dashboard.tsx*/
+.shadow-undead {
+  box-shadow: 0 4px 15px rgba(107, 140, 33, 0.3);
+}
+
+.text-blood-red {
+  color: var(--blood-red);
+}
+
+.bg-zombie-dark {
+  background-color: var(--zombie-dark);
+}
+
+.border-decay-yellow {
+  border-color: var(--decay-yellow);
+}
+
+.backdrop-blur-sm {
+  backdrop-filter: blur(4px);
+}
+
+.drop-shadow-undead {
+  filter: drop-shadow(0 2px 1px rgba(138, 3, 3, 0.4));
+}
+
+.bg-zombie-dark\/90 {
+  background-color: rgba(10, 10, 8, 0.9);
 }
