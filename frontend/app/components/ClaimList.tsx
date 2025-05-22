@@ -150,27 +150,6 @@ const ClaimList = ({ ownerAddress }: ClaimListProps) => {
 
   return (
     <div className="space-y-6">
-      {/* Header with Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <div className="bg-[rgba(138,3,3,0.2)] border-2 border-[var(--blood-red)] rounded-lg p-4 text-center">
-          <div className="text-3xl mb-2">⚱️</div>
-          <p className="text-[var(--blood-red)] font-zombie text-xl">{claimableCount}</p>
-          <p className="text-[var(--decay-yellow)] text-sm">Ready to Plunder</p>
-        </div>
-        
-        <div className="bg-[rgba(107,140,33,0.2)] border-2 border-[var(--zombie-green)] rounded-lg p-4 text-center">
-          <div className="text-3xl mb-2">💰</div>
-          <p className="text-[var(--zombie-green)] font-zombie text-xl">{totalValue.toFixed(2)}</p>
-          <p className="text-[var(--decay-yellow)] text-sm">Total SUI Cursed</p>
-        </div>
-        
-        <div className="bg-[rgba(196,183,13,0.2)] border-2 border-[var(--decay-yellow)] rounded-lg p-4 text-center">
-          <div className="text-3xl mb-2">🏴‍☠️</div>
-          <p className="text-[var(--decay-yellow)] font-zombie text-xl">{beneficiaries.length}</p>
-          <p className="text-[var(--zombie-green)] text-sm">Death Contracts</p>
-        </div>
-      </div>
-
       {/* Claims Table */}
       <div className="bg-[rgba(10,10,8,0.9)] border-4 border-[var(--decay-yellow)] rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
@@ -338,6 +317,27 @@ const ClaimList = ({ ownerAddress }: ClaimListProps) => {
               })}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Header with Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <div className="bg-[rgba(138,3,3,0.2)] border-2 border-[var(--blood-red)] rounded-lg p-4 text-center">
+          <div className="text-3xl mb-2">⚱️</div>
+          <p className="text-[var(--blood-red)] font-zombie text-xl">{claimableCount}</p>
+          <p className="text-[var(--decay-yellow)] text-sm">Ready to Plunder</p>
+        </div>
+        
+        <div className="bg-[rgba(107,140,33,0.2)] border-2 border-[var(--zombie-green)] rounded-lg p-4 text-center">
+          <div className="text-3xl mb-2">💰</div>
+          <p className="text-[var(--zombie-green)] font-zombie text-xl">{totalValue.toFixed(2)}</p>
+          <p className="text-[var(--decay-yellow)] text-sm">Total SUI Cursed</p>
+        </div>
+        
+        <div className="bg-[rgba(196,183,13,0.2)] border-2 border-[var(--decay-yellow)] rounded-lg p-4 text-center">
+          <div className="text-3xl mb-2">🏴‍☠️</div>
+          <p className="text-[var(--decay-yellow)] font-zombie text-xl">{beneficiaries.length}</p>
+          <p className="text-[var(--zombie-green)] text-sm">Death Contracts</p>
         </div>
       </div>
 

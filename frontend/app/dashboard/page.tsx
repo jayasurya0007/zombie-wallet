@@ -46,7 +46,7 @@ export default function Dashboard() {
     loading: false,
     error: null,
   });
-
+  const [showAddBeneficiaryForWallet, setShowAddBeneficiaryForWallet] = useState<string | null>(null);
   const { loading: graphqlLoading, error, data,refetch  } = useQuery(GET_ALL_ZOMBIE_WALLETS, {
   client,
   skip: !currentAccount?.address,
@@ -85,8 +85,8 @@ export default function Dashboard() {
   return parseInt(wallet.asMoveObject.contents.json.coin.value) / 1_000_000_000;
 };
 
-  const handleAddBeneficiary = async () => {
-    if (!selectedWallet || !currentAccount?.address) return;
+  const handleAddBeneficiary = async (walletId: string) => {  // Add walletId parameter
+    if (!currentAccount?.address) return;
     const allocation = Number(beneficiaryForm.allocation);
     const inactivityDuration = Number(beneficiaryForm.inactivityDuration);
     
@@ -99,7 +99,7 @@ export default function Dashboard() {
 
     try {
       await addBeneficiary(
-        selectedWallet,
+        walletId,  // Use passed walletId instead of selectedWallet
         beneficiaryForm.address,
         allocation,
         beneficiaryForm.depositCoinId
@@ -112,7 +112,7 @@ export default function Dashboard() {
           ownerAddress: currentAccount.address,
           beneAddress: beneficiaryForm.address,
           allocation: allocation,
-          walletAddress: selectedWallet,
+          walletAddress: walletId,  // Use passed walletId
           inactivityDuration: inactivityDuration,
           inactivityUnit: beneficiaryForm.inactivityUnit,
         }),
@@ -121,7 +121,7 @@ export default function Dashboard() {
       const result = await storeResponse.json();
       if (!storeResponse.ok) throw new Error(result.error || 'Failed to store beneficiary record');
 
-      setShowAddBeneficiary(false);
+      // Reset form state for this specific wallet
       setBeneficiaryForm({ 
         address: '', 
         allocation: '', 
@@ -129,10 +129,11 @@ export default function Dashboard() {
         inactivityDuration: '30',
         inactivityUnit: 'days'
       });
+      setShowAddBeneficiaryForWallet(null);  // Close the form
+      
       client.cache.evict({ fieldName: 'objects' });
-      await Promise.all([
-        fetchWallets()
-      ]);
+      await fetchWallets();
+      
     } catch (error) {
       console.error('Storage error:', error);
       setStoreStatus({
@@ -367,7 +368,7 @@ export default function Dashboard() {
                       <button
                         onClick={() => {
                           setSelectedWallet(wallet.id);
-                          setShowAddBeneficiary(true);
+                          setShowAddBeneficiaryForWallet(wallet.id); // Changed from setShowAddBeneficiary(true)
                         }}
                         className="relative w-full bg-[var(--zombie-green)] hover:bg-[rgba(107,140,33,0.8)] text-[var(--decay-yellow)] py-3 px-4 rounded font-zombie
                                   transition-all duration-300 border border-[var(--decay-yellow)] hover:shadow-[0_0_10px_rgba(107,140,33,0.5)]"
@@ -401,6 +402,112 @@ export default function Dashboard() {
                         {isTransferring ? '⚰️ Transferring...' : '🩸 Execute Death Transfer'}
                       </button>
                     </div>
+
+                    {/* Add Beneficiary Form */}
+                    {showAddBeneficiaryForWallet === wallet.id && (
+                      <div className="mt-4 bg-[rgba(107,140,33,0.2)] border-2 border-[var(--zombie-green)] p-4 rounded">
+                        <p className="text-[var(--decay-yellow)] font-zombie mb-3">💀 Summon New Soul Heir:</p>
+                        
+                        {storeStatus.error && (
+                          <div className="mb-3 p-2 bg-[rgba(138,3,3,0.3)] border border-[var(--blood-red)] rounded text-[var(--decay-yellow)] text-sm">
+                            ⚠️ {storeStatus.error}
+                          </div>
+                        )}
+
+                        <div className="space-y-3">
+                          <input
+                            type="text"
+                            value={beneficiaryForm.address}
+                            onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, address: e.target.value })}
+                            placeholder="👻 Soul Address (0x...)"
+                            className="w-full p-2 bg-[var(--zombie-dark)] text-[var(--zombie-green)] border border-[var(--decay-yellow)] rounded font-mono
+                                      placeholder-[var(--zombie-green)] focus:border-[var(--blood-red)] focus:outline-none text-sm"
+                            pattern="^0x[a-fA-F0-9]{64}$"
+                          />
+                          
+                          <input
+                            type="number"
+                            value={beneficiaryForm.allocation}
+                            onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, allocation: e.target.value })}
+                            placeholder="💰 Blood Money (SUI)"
+                            className="w-full p-2 bg-[var(--zombie-dark)] text-[var(--zombie-green)] border border-[var(--decay-yellow)] rounded
+                                      placeholder-[var(--zombie-green)] focus:border-[var(--blood-red)] focus:outline-none text-sm"
+                            min="0"
+                            step="0.01"
+                          />
+                          
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              value={beneficiaryForm.inactivityDuration}
+                              onChange={(e) => setBeneficiaryForm({ 
+                                ...beneficiaryForm, 
+                                inactivityDuration: e.target.value 
+                              })}
+                              placeholder="⏰ Death Timer"
+                              className="w-2/3 p-2 bg-[var(--zombie-dark)] text-[var(--zombie-green)] border border-[var(--decay-yellow)] rounded
+                                        placeholder-[var(--zombie-green)] focus:border-[var(--blood-red)] focus:outline-none text-sm"
+                              min="1"
+                            />
+                            <select
+                              value={beneficiaryForm.inactivityUnit}
+                              onChange={(e) => setBeneficiaryForm({ 
+                                ...beneficiaryForm, 
+                                inactivityUnit: e.target.value 
+                              })}
+                              className="w-1/3 p-2 bg-[var(--zombie-dark)] text-[var(--zombie-green)] border border-[var(--decay-yellow)] rounded
+                                        focus:border-[var(--blood-red)] focus:outline-none text-sm"
+                            >
+                              <option value="minutes">Min</option>
+                              <option value="hours">Hrs</option>
+                              <option value="days">Days</option>
+                            </select>
+                          </div>
+                          
+                          <select
+                            value={beneficiaryForm.depositCoinId}
+                            onChange={(e) => setBeneficiaryForm({ 
+                              ...beneficiaryForm, 
+                              depositCoinId: e.target.value 
+                            })}
+                            className="w-full p-2 bg-[var(--zombie-dark)] text-[var(--zombie-green)] border border-[var(--decay-yellow)] rounded
+                                      focus:border-[var(--blood-red)] focus:outline-none text-sm"
+                          >
+                            <option value="">💰 Select Cursed Coin...</option>
+                            {availableCoins
+                              .filter(coin => 
+                                Number(coin.balance) > (Number(beneficiaryForm.allocation || 0) * 1e9 + 0.1 * 1e9)
+                              )
+                              .map((coin) => (
+                                <option key={coin.coinObjectId} value={coin.coinObjectId}>
+                                  ⚰️ {formatBalance(coin.balance)} SUI ({coin.coinObjectId.slice(0, 6)}...)
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+
+                        <div className="flex space-x-2 mt-4">
+                          <div className="group/add relative flex-1">
+                            <div className="absolute -inset-0.5 bg-[rgba(107,140,33,0.3)] rounded blur opacity-75 group-hover/add:opacity-100 transition-all duration-300" />
+                            <button
+                              onClick={() => handleAddBeneficiary(wallet.id)}  // Pass current wallet ID
+                              disabled={storeStatus.loading}
+                              className="relative w-full bg-[var(--zombie-green)] hover:bg-[rgba(107,140,33,0.8)] text-[var(--decay-yellow)] py-2 px-4 rounded font-zombie text-sm
+                                        transition-all duration-300 border border-[var(--decay-yellow)] disabled:opacity-50"
+                            >
+                              {storeStatus.loading ? '⚰️ Cursing...' : '👻 Bind Soul'}
+                            </button>
+                          </div>
+                          <button
+                            onClick={() => setShowAddBeneficiaryForWallet(null)}
+                            className="flex-1 bg-[rgba(10,10,8,0.8)] hover:bg-[rgba(10,10,8,0.9)] text-[var(--zombie-green)] py-2 px-4 rounded font-zombie text-sm
+                                      transition-all duration-300 border border-[var(--zombie-green)]"
+                          >
+                            ❌ Banish
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Withdraw Form */}
                     {showWithdrawForm === wallet.id && (
@@ -501,116 +608,6 @@ export default function Dashboard() {
             </div>
             <div className="bg-[rgba(196,183,13,0.1)] border border-[var(--decay-yellow)] rounded p-4">
               <BeneficiaryList ownerAddress={currentAccount.address} />
-            </div>
-          </div>
-        )}
-
-        {/* Add Beneficiary Modal */}
-        {showAddBeneficiary && (
-          <div className="fixed inset-0 bg-[rgba(0,0,0,0.8)] flex justify-center items-center z-50 backdrop-blur-sm">
-            <div className="bg-[rgba(10,10,8,0.95)] border-4 border-[var(--blood-red)] p-8 rounded-lg max-w-md w-full mx-4 relative">
-              <div className="absolute -top-4 -right-4 text-4xl animate-float">💀</div>
-              
-              <h3 className="text-[var(--blood-red)] font-zombie text-2xl mb-6">Summon New Soul Heir</h3>
-              
-              {storeStatus.error && (
-                <div className="mb-4 p-3 bg-[rgba(138,3,3,0.3)] border border-[var(--blood-red)] rounded text-[var(--decay-yellow)] text-sm">
-                  ⚠️ {storeStatus.error}
-                </div>
-              )}
-              
-              <div className="space-y-4">
-                <input
-                  type="text"
-                  value={beneficiaryForm.address}
-                  onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, address: e.target.value })}
-                  placeholder="👻 Soul Address (0x...)"
-                  className="w-full p-3 bg-[var(--zombie-dark)] text-[var(--zombie-green)] border-2 border-[var(--decay-yellow)] rounded font-mono
-                            placeholder-[var(--zombie-green)] focus:border-[var(--blood-red)] focus:outline-none transition-all duration-300"
-                  pattern="^0x[a-fA-F0-9]{64}$"
-                />
-                
-                <input
-                  type="number"
-                  value={beneficiaryForm.allocation}
-                  onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, allocation: e.target.value })}
-                  placeholder="💰 Blood Money (SUI)"
-                  className="w-full p-3 bg-[var(--zombie-dark)] text-[var(--zombie-green)] border-2 border-[var(--decay-yellow)] rounded
-                            placeholder-[var(--zombie-green)] focus:border-[var(--blood-red)] focus:outline-none transition-all duration-300"
-                  min="0"
-                  step="0.01"
-                />
-                
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    value={beneficiaryForm.inactivityDuration}
-                    onChange={(e) => setBeneficiaryForm({ 
-                      ...beneficiaryForm, 
-                      inactivityDuration: e.target.value 
-                    })}
-                    placeholder="⏰ Death Timer"
-                    className="w-2/3 p-3 bg-[var(--zombie-dark)] text-[var(--zombie-green)] border-2 border-[var(--decay-yellow)] rounded
-                              placeholder-[var(--zombie-green)] focus:border-[var(--blood-red)] focus:outline-none transition-all duration-300"
-                    min="1"
-                  />
-                  <select
-                    value={beneficiaryForm.inactivityUnit}
-                    onChange={(e) => setBeneficiaryForm({ 
-                      ...beneficiaryForm, 
-                      inactivityUnit: e.target.value 
-                    })}
-                    className="w-1/3 p-3 bg-[var(--zombie-dark)] text-[var(--zombie-green)] border-2 border-[var(--decay-yellow)] rounded
-                              focus:border-[var(--blood-red)] focus:outline-none transition-all duration-300"
-                  >
-                    <option value="minutes">Min</option>
-                    <option value="hours">Hrs</option>
-                    <option value="days">Days</option>
-                  </select>
-                </div>
-                
-                <select
-                  value={beneficiaryForm.depositCoinId}
-                  onChange={(e) => setBeneficiaryForm({ 
-                    ...beneficiaryForm, 
-                    depositCoinId: e.target.value 
-                  })}
-                  className="w-full p-3 bg-[var(--zombie-dark)] text-[var(--zombie-green)] border-2 border-[var(--decay-yellow)] rounded
-                            focus:border-[var(--blood-red)] focus:outline-none transition-all duration-300"
-                >
-                  <option value="">💰 Select Cursed Coin...</option>
-                  {availableCoins
-                    .filter(coin => 
-                      Number(coin.balance) > (Number(beneficiaryForm.allocation || 0) * 1e9 + 0.1 * 1e9)
-                    )
-                    .map((coin) => (
-                      <option key={coin.coinObjectId} value={coin.coinObjectId}>
-                        ⚰️ {formatBalance(coin.balance)} SUI ({coin.coinObjectId.slice(0, 6)}...)
-                      </option>
-                    ))}
-                </select>
-              </div>
-              
-              <div className="flex space-x-3 mt-6">
-                <div className="group/add relative flex-1">
-                  <div className="absolute -inset-0.5 bg-[rgba(107,140,33,0.3)] rounded blur opacity-75 group-hover/add:opacity-100 transition-all duration-300" />
-                  <button
-                    onClick={handleAddBeneficiary}
-                    disabled={storeStatus.loading}
-                    className="relative w-full bg-[var(--zombie-green)] hover:bg-[rgba(107,140,33,0.8)] text-[var(--decay-yellow)] py-3 rounded font-zombie text-lg
-                              transition-all duration-300 border-2 border-[var(--decay-yellow)] disabled:opacity-50 hover:shadow-[0_0_10px_rgba(107,140,33,0.5)]"
-                  >
-                    {storeStatus.loading ? '⚰️ Cursing...' : '👻 Bind Soul'}
-                  </button>
-                </div>
-                <button
-                  onClick={() => setShowAddBeneficiary(false)}
-                  className="flex-1 bg-[rgba(10,10,8,0.8)] hover:bg-[rgba(10,10,8,0.9)] text-[var(--zombie-green)] py-3 rounded font-zombie text-lg
-                            transition-all duration-300 border-2 border-[var(--zombie-green)] hover:border-[var(--blood-red)]"
-                >
-                  ❌ Banish
-                </button>
-              </div>
             </div>
           </div>
         )}
