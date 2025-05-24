@@ -63,8 +63,7 @@ Traditional digital asset management lacks an easy, trustless way to handle inhe
 
 ## 📄 Smart Contracts
 
-- `ZombieVault.move`: Vault logic for storing asset allocations and ownership.
-- `VaultLib.move`: Helper library for vault lifecycle and role management.
+- `Zombie.move`: Vault logic for storing asset allocations and ownership.
 
 ---
 
